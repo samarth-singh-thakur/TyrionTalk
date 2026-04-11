@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 
 
 DEFAULTS: Dict[str, str] = {
-    "PHONE_MAC": "",
+    "PHONE_MAC": "58:43:AB:D9:8C:6E",
     "BT_ALIAS": "PiCallBridge",
     "BT_HCI": "hci0",
     "AUX_PCM": "plughw:CARD=Headphones,DEV=0",
@@ -157,7 +157,7 @@ class BTCallBridge:
         phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
         return [
             self.bluealsa_aplay_cmd,
-            "--profile=SCO",
+            "--profile-sco",
             f"--pcm={self.cfg['AUX_PCM']}",
             phone_mac,
         ]
@@ -166,7 +166,7 @@ class BTCallBridge:
         phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
         sco_rate = self.cfg["SCO_RATE"].strip()
         mic_pcm = self.cfg["MIC_PCM"].strip()
-        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco,HWCOMPAT=silence"
+        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
         pipeline = (
             f"exec {shlex.quote(self.arecord_cmd)} -D {shlex.quote(mic_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)} "
             f"| {shlex.quote(self.aplay_cmd)} -D {shlex.quote(bluealsa_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)}"

@@ -1,7 +1,7 @@
 # Copy this file to bridge.conf and edit the values.
 
-# The phone MAC address after pairing. Leave blank for initial pairing.
-PHONE_MAC=
+# Known-good phone MAC from the working Tyrion snapshot.
+PHONE_MAC=58:43:AB:D9:8C:6E
 
 # Bluetooth controller alias shown on the phone.
 BT_ALIAS=PiCallBridge

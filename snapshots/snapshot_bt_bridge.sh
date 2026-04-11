@@ -2,17 +2,47 @@
 set -euo pipefail
 
 TS="$(date +%F-%H%M%S)"
-DESKTOP="${SUDO_USER:+/home/$SUDO_USER/Desktop}"
-DESKTOP="${DESKTOP:-$HOME/Desktop}"
-SNAP_DIR="$DESKTOP/bt-call-bridge-snapshot-$TS"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PHONE_MAC_DEFAULT="58:43:AB:D9:8C:6E"
+USER_NAME="${SUDO_USER:-$(logname 2>/dev/null || true)}"
+USER_UID="${USER_NAME:+$(id -u "$USER_NAME" 2>/dev/null || true)}"
+USER_RUNTIME_DIR="${USER_UID:+/run/user/$USER_UID}"
+USER_DBUS_ADDR="${USER_RUNTIME_DIR:+unix:path=$USER_RUNTIME_DIR/bus}"
+
+prompt_snapshot_name() {
+  local input
+  local default_name="rpi-bt-call-bridge-snapshot-$TS"
+
+  if [[ -t 0 ]]; then
+    read -r -p "Snapshot name [$default_name]: " input
+  fi
+
+  input="${input:-$default_name}"
+  input="$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+
+  if [[ -z "$input" ]]; then
+    input="$default_name"
+  fi
+
+  printf '%s\n' "$input"
+}
+
+SNAPSHOT_NAME="$(prompt_snapshot_name)"
+SNAP_DIR="$SCRIPT_DIR/$SNAPSHOT_NAME"
+TARBALL_PATH="$SCRIPT_DIR/$SNAPSHOT_NAME.tar.gz"
+
+if [[ -e "$SNAP_DIR" || -e "$TARBALL_PATH" ]]; then
+  echo "Snapshot already exists: $SNAPSHOT_NAME" >&2
+  exit 1
+fi
 
 mkdir -p "$SNAP_DIR"
 
 echo "[1/8] Copying bridge files..."
-mkdir -p "$SNAP_DIR/opt" "$SNAP_DIR/etc/systemd/system" "$SNAP_DIR/var/lib"
-cp -a /opt/bt-call-bridge "$SNAP_DIR/opt/" 2>/dev/null || true
+mkdir -p "$SNAP_DIR/opt/bt-call-bridge" "$SNAP_DIR/etc/systemd/system" "$SNAP_DIR/var/lib"
+cp -a /opt/bt-call-bridge/. "$SNAP_DIR/opt/bt-call-bridge/" 2>/dev/null || true
+rm -rf "$SNAP_DIR/opt/bt-call-bridge/.git"
 cp -a /etc/systemd/system/bt-call-bridge.service "$SNAP_DIR/etc/systemd/system/" 2>/dev/null || true
 
 echo "[2/8] Copying Bluetooth state..."
@@ -26,10 +56,15 @@ echo "[4/8] Saving service state..."
 systemctl list-unit-files | grep -E 'bluealsa|pipewire|wireplumber|pulseaudio|ofono|bt-call-bridge|bluetooth' > "$SNAP_DIR/system-services.txt" || true
 systemctl --type=service --all | grep -E 'bluealsa|pipewire|wireplumber|pulseaudio|ofono|bt-call-bridge|bluetooth' > "$SNAP_DIR/system-services-runtime.txt" || true
 
-USER_NAME="${SUDO_USER:-$(logname 2>/dev/null || true)}"
-if [[ -n "${USER_NAME:-}" ]]; then
-  sudo -u "$USER_NAME" systemctl --user list-unit-files | grep -E 'pipewire|wireplumber|pulseaudio' > "$SNAP_DIR/user-services.txt" || true
-  sudo -u "$USER_NAME" systemctl --user --type=service --all | grep -E 'pipewire|wireplumber|pulseaudio' > "$SNAP_DIR/user-services-runtime.txt" || true
+if [[ -n "${USER_NAME:-}" && -n "${USER_RUNTIME_DIR:-}" && -S "${USER_RUNTIME_DIR}/bus" ]]; then
+  sudo -u "$USER_NAME" \
+    XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$USER_DBUS_ADDR" \
+    systemctl --user list-unit-files | grep -E 'pipewire|wireplumber|pulseaudio' > "$SNAP_DIR/user-services.txt" || true
+  sudo -u "$USER_NAME" \
+    XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$USER_DBUS_ADDR" \
+    systemctl --user --type=service --all | grep -E 'pipewire|wireplumber|pulseaudio' > "$SNAP_DIR/user-services-runtime.txt" || true
 fi
 
 echo "[5/8] Saving Bluetooth diagnostics..."
@@ -109,13 +144,17 @@ EOF
 chmod +x "$SNAP_DIR/restore_snapshot.sh"
 
 echo "[8/8] Packing tarball..."
-tar -czf "$DESKTOP/bt-call-bridge-snapshot-$TS.tar.gz" -C "$DESKTOP" "$(basename "$SNAP_DIR")"
+tar -czf "$TARBALL_PATH" -C "$SCRIPT_DIR" "$(basename "$SNAP_DIR")"
+
+if [[ -n "${USER_NAME:-}" ]]; then
+  chown -R "$USER_NAME":"$USER_NAME" "$SNAP_DIR" "$TARBALL_PATH" 2>/dev/null || true
+fi
 
 echo
 echo "Snapshot created:"
 echo "  $SNAP_DIR"
 echo "Tarball created:"
-echo "  $DESKTOP/bt-call-bridge-snapshot-$TS.tar.gz"
+echo "  $TARBALL_PATH"
 echo
 echo "To restore later:"
 echo "  cd '$SNAP_DIR'"
