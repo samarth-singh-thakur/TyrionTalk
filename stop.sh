@@ -33,16 +33,18 @@ stop_bridge_processes() {
   sudo systemctl stop bt-call-bridge.service 2>/dev/null || true
 
   # Stop bridge-owned processes only
+  sudo pkill -f '/usr/bin/bluealsad --initial-volume .* --device hci0' || true
   sudo pkill -f '/usr/bin/bluealsa --initial-volume .* --device hci0' || true
   sudo pkill -f '/usr/bin/bluealsa-aplay --profile-sco --pcm=' || true
   sudo pkill -f 'arecord -D plughw:CARD=C920,DEV=0' || true
+  sudo pkill -f 'ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i ' || true
   sudo pkill -f 'aplay -D bluealsa:DEV=' || true
-  sudo pkill -f '/opt/bt-call-bridge/scripts/bt_call_bridge.py' || true
+  sudo pkill -f 'bt_call_bridge.py' || true
 
   sleep 1
 
   # Clean up any still-running matching processes
-  PIDS="$(ps -eo pid=,args= | grep -E 'bluealsa --initial-volume|bluealsa-aplay --profile-sco|arecord -D plughw:CARD=C920,DEV=0|aplay -D bluealsa:DEV=|bt_call_bridge.py' | grep -v grep | awk '{print $1}' || true)"
+  PIDS="$(ps -eo pid=,args= | grep -E 'bluealsad --initial-volume|bluealsa --initial-volume|bluealsa-aplay --profile-sco|arecord -D plughw:CARD=C920,DEV=0|ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i |aplay -D bluealsa:DEV=|bt_call_bridge.py' | grep -v grep | awk '{print $1}' || true)"
   if [[ -n "${PIDS// }" ]]; then
     log "Force-killing remaining bridge processes: $PIDS"
     sudo kill -9 $PIDS || true

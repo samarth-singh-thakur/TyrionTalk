@@ -17,6 +17,7 @@ The package turns a Raspberry Pi into a Bluetooth call endpoint for a phone:
 
 - phone call audio from the phone goes to the Pi over Bluetooth and plays on the Pi AUX/headphone output
 - microphone audio from a USB webcam or USB mic connected to the Pi goes back to the phone over Bluetooth
+- optionally, a local audio file can be looped into the phone call instead of using the live mic
 
 In short:
 
@@ -49,6 +50,15 @@ Uplink path
 USB webcam microphone
 -> ALSA capture device
 -> arecord
+-> aplay to BlueALSA SCO PCM
+-> BlueALSA
+-> SCO audio transport
+-> HFP/HSP over Bluetooth
+-> Phone
+
+Alternate uplink path
+Local audio file
+-> ffmpeg decode + loop
 -> aplay to BlueALSA SCO PCM
 -> BlueALSA
 -> SCO audio transport
@@ -176,6 +186,7 @@ does all of the following:
    - `bluez-alsa-utils`
    - `libasound2-plugin-bluez`
    - `alsa-utils`
+   - `ffmpeg`
    - `python3`
 3. Creates the install target directory, defaulting to:
    - `/opt/bt-call-bridge`
@@ -304,6 +315,11 @@ It does five major jobs:
 4. starts the downlink and uplink audio workers
 5. supervises those child processes and restarts them if they exit
 
+The uplink worker can now run in two modes:
+
+- live microphone capture from `MIC_PCM`
+- looped file playback from `UPLINK_AUDIO_FILE`
+
 Its subcommands are also useful:
 
 ```bash
@@ -343,6 +359,8 @@ Important settings include:
 - `BT_HCI`
 - `AUX_PCM`
 - `MIC_PCM`
+- `UPLINK_SOURCE`
+- `UPLINK_AUDIO_FILE`
 - `SCO_RATE`
 - `AUTO_CONNECT`
 - `DISCOVERABLE`
@@ -358,8 +376,12 @@ It checks that these commands exist:
 - `bluealsad` or `bluealsa`
 - `bluealsa-aplay`
 - `bluetoothctl`
-- `arecord`
 - `aplay`
+
+Then, depending on uplink mode, it also requires:
+
+- `arecord` for `UPLINK_SOURCE=mic`
+- `ffmpeg` for `UPLINK_SOURCE=file`
 
 If one is missing, startup fails early with a clear error.
 
@@ -428,7 +450,7 @@ which maps to the Pi headphone jack.
 
 ### Step 7: start the uplink worker
 
-The uplink worker is a shell pipeline:
+If `UPLINK_SOURCE=mic`, the uplink worker is a shell pipeline:
 
 ```bash
 arecord -D "$MIC_PCM" -q -f S16_LE -c 1 -r "$SCO_RATE" \
@@ -447,6 +469,21 @@ MIC_PCM=plughw:CARD=C920,DEV=0
 ```
 
 which matches the saved Logitech C920 webcam microphone.
+
+If `UPLINK_SOURCE=file`, the bridge starts this looped file pipeline instead:
+
+```bash
+ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i "$UPLINK_AUDIO_FILE" -vn -f s16le -acodec pcm_s16le -ac 1 -ar "$SCO_RATE" - \
+  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco" -q -f S16_LE -c 1 -r "$SCO_RATE"
+```
+
+Its job is:
+
+- open the configured local audio file
+- decode it continuously
+- loop it forever
+- convert it to mono 16-bit PCM at the SCO rate
+- feed that audio back to the caller instead of using live mic capture
 
 ### Step 8: supervise the workers
 
@@ -487,6 +524,8 @@ BT_ALIAS=PiCallBridge
 BT_HCI=hci0
 AUX_PCM=plughw:CARD=Headphones,DEV=0
 MIC_PCM=plughw:CARD=C920,DEV=0
+UPLINK_SOURCE=file
+UPLINK_AUDIO_FILE=KBC_PRANK.mp3
 SCO_RATE=16000
 AUTO_CONNECT=1
 DISCOVERABLE=1
@@ -508,6 +547,8 @@ What the most important keys mean:
 - `BT_HCI`: the Bluetooth adapter, usually `hci0`
 - `AUX_PCM`: the ALSA playback target for the remote caller's voice
 - `MIC_PCM`: the ALSA capture source for your local microphone
+- `UPLINK_SOURCE`: `mic` for live mic capture or `file` for looped audio-file playback
+- `UPLINK_AUDIO_FILE`: local file to decode and loop when `UPLINK_SOURCE=file`
 - `SCO_RATE`: usually `16000`, which is a sensible default for wideband-capable HFP audio
 - `AUTO_CONNECT`: whether the bridge should keep trying to connect the configured phone
 - `DISCOVERABLE` and `PAIRABLE`: whether the adapter stays visible/pairable while the bridge runs
@@ -563,6 +604,15 @@ python3 scripts/bt_call_bridge.py --config ./bridge.conf --preflight
 sudo ./start.sh ./bridge.conf
 ```
 
+To have the caller hear the bundled prank audio on loop, set:
+
+```ini
+UPLINK_SOURCE=file
+UPLINK_AUDIO_FILE=KBC_PRANK.mp3
+```
+
+and then start the bridge normally.
+
 ### Service mode
 
 If installed into `/opt/bt-call-bridge`, use:
@@ -607,6 +657,10 @@ When things are working correctly:
 4. The phone routes call audio to the Bluetooth call profile.
 5. The remote party's voice plays from the Pi AUX/headphone output.
 6. Your USB webcam mic audio is sent back to the phone call.
+
+If `UPLINK_SOURCE=file`, step 6 changes to:
+
+- the caller hears the configured local audio file on loop instead of live mic audio
 
 What this project does not do:
 

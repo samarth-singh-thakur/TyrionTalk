@@ -17,6 +17,7 @@ apt-get install -y \
   bluez-alsa-utils \
   libasound2-plugin-bluez \
   alsa-utils \
+  ffmpeg \
   python3
 
 mkdir -p "$TARGET_DIR"

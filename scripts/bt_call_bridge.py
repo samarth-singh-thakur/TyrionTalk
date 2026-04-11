@@ -18,6 +18,8 @@ DEFAULTS: Dict[str, str] = {
     "BT_HCI": "hci0",
     "AUX_PCM": "plughw:CARD=Headphones,DEV=0",
     "MIC_PCM": "plughw:CARD=C920,DEV=0",
+    "UPLINK_SOURCE": "mic",
+    "UPLINK_AUDIO_FILE": "",
     "SCO_RATE": "16000",
     "AUTO_CONNECT": "1",
     "DISCOVERABLE": "1",
@@ -45,15 +47,24 @@ class BridgeError(RuntimeError):
 
 
 class BTCallBridge:
-    def __init__(self, cfg: Dict[str, str]):
+    def __init__(self, cfg: Dict[str, str], config_path: Optional[str] = None):
         self.cfg = cfg
         self.children: Dict[str, ChildProcess] = {}
         self.should_stop = False
+        self.config_dir = Path(config_path).resolve().parent if config_path else Path.cwd()
+        self.uplink_source = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
+        if self.uplink_source not in {"mic", "file"}:
+            raise BridgeError("UPLINK_SOURCE must be 'mic' or 'file'")
         self.bluealsa_cmd = self._find_first(["bluealsad", "bluealsa"])
         self.bluealsa_aplay_cmd = self._find_required("bluealsa-aplay")
         self.bluetoothctl_cmd = self._find_required("bluetoothctl")
-        self.arecord_cmd = self._find_required("arecord")
         self.aplay_cmd = self._find_required("aplay")
+        self.arecord_cmd: Optional[str] = None
+        self.ffmpeg_cmd: Optional[str] = None
+        if self.uplink_source == "mic":
+            self.arecord_cmd = self._find_required("arecord")
+        else:
+            self.ffmpeg_cmd = self._find_required("ffmpeg")
         self._register_signals()
 
     @staticmethod
@@ -162,11 +173,41 @@ class BTCallBridge:
             phone_mac,
         ]
 
+    def resolve_uplink_audio_file(self) -> Path:
+        raw_path = self.cfg.get("UPLINK_AUDIO_FILE", "").strip()
+        if not raw_path:
+            raise BridgeError("UPLINK_SOURCE=file requires UPLINK_AUDIO_FILE to be set")
+
+        audio_path = Path(raw_path).expanduser()
+        if not audio_path.is_absolute():
+            audio_path = self.config_dir / audio_path
+        audio_path = audio_path.resolve()
+        if not audio_path.is_file():
+            raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
+        return audio_path
+
+    def build_file_uplink_cmd(self) -> List[str]:
+        phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
+        sco_rate = self.cfg["SCO_RATE"].strip()
+        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
+        audio_file = self.resolve_uplink_audio_file()
+        assert self.ffmpeg_cmd is not None
+        pipeline = (
+            f"exec {shlex.quote(self.ffmpeg_cmd)} -hide_banner -loglevel error -nostdin -stream_loop -1 -re "
+            f"-i {shlex.quote(str(audio_file))} -vn -f s16le -acodec pcm_s16le -ac 1 -ar {shlex.quote(sco_rate)} - "
+            f"| {shlex.quote(self.aplay_cmd)} -D {shlex.quote(bluealsa_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)}"
+        )
+        return ["bash", "-lc", pipeline]
+
     def build_uplink_cmd(self) -> List[str]:
+        if self.uplink_source == "file":
+            return self.build_file_uplink_cmd()
+
         phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
         sco_rate = self.cfg["SCO_RATE"].strip()
         mic_pcm = self.cfg["MIC_PCM"].strip()
         bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
+        assert self.arecord_cmd is not None
         pipeline = (
             f"exec {shlex.quote(self.arecord_cmd)} -D {shlex.quote(mic_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)} "
             f"| {shlex.quote(self.aplay_cmd)} -D {shlex.quote(bluealsa_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)}"
@@ -245,15 +286,20 @@ def list_alsa() -> int:
 
 def preflight(path: str) -> int:
     cfg = parse_kv_config(path)
-    bridge = BTCallBridge(cfg)
+    bridge = BTCallBridge(cfg, config_path=path)
     print("BlueALSA daemon:", bridge.bluealsa_cmd)
     print("bluealsa-aplay:", bridge.bluealsa_aplay_cmd)
     print("bluetoothctl:", bridge.bluetoothctl_cmd)
-    print("arecord:", bridge.arecord_cmd)
     print("aplay:", bridge.aplay_cmd)
+    print("UPLINK_SOURCE:", bridge.uplink_source)
+    if bridge.uplink_source == "mic":
+        print("arecord:", bridge.arecord_cmd)
+        print("MIC_PCM:", cfg["MIC_PCM"])
+    else:
+        print("ffmpeg:", bridge.ffmpeg_cmd)
+        print("UPLINK_AUDIO_FILE:", bridge.resolve_uplink_audio_file())
     print("PHONE_MAC:", cfg["PHONE_MAC"] or "<empty>")
     print("AUX_PCM:", cfg["AUX_PCM"])
-    print("MIC_PCM:", cfg["MIC_PCM"])
     return 0
 
 
@@ -270,7 +316,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return preflight(args.config)
 
     cfg = parse_kv_config(args.config)
-    bridge = BTCallBridge(cfg)
+    bridge = BTCallBridge(cfg, config_path=args.config)
     bridge.run()
     return 0
 

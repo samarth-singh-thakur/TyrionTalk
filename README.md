@@ -4,6 +4,7 @@ This package creates a **userspace Bluetooth call bridge** for a Raspberry Pi:
 
 - **Phone call downlink**: phone -> Bluetooth HFP/HSP -> Raspberry Pi -> **AUX / headphone jack**
 - **Phone call uplink**: **USB webcam microphone** -> Raspberry Pi -> Bluetooth HFP/HSP -> phone
+- **Alternate call uplink**: **looped local audio file** -> Raspberry Pi -> Bluetooth HFP/HSP -> phone
 
 It is designed for **Raspberry Pi 3 / Raspberry Pi OS Bookworm or Debian 12-class systems** and uses:
 
@@ -37,6 +38,11 @@ When the bridge is running:
 4. It starts an **uplink path**:
    - configured webcam mic ALSA PCM -> `aplay` to BlueALSA `PROFILE=sco`
 5. It restarts the audio workers if they exit.
+
+The uplink worker can run in two modes:
+
+- `UPLINK_SOURCE=mic` uses the configured `MIC_PCM`
+- `UPLINK_SOURCE=file` decodes and loops `UPLINK_AUDIO_FILE`
 
 ---
 
@@ -95,6 +101,7 @@ The installer uses these packages:
 - `bluez-alsa-utils`
 - `libasound2-plugin-bluez`
 - `alsa-utils`
+- `ffmpeg`
 - `python3`
 
 ---
@@ -203,6 +210,8 @@ BT_ALIAS=PiCallBridge
 BT_HCI=hci0
 AUX_PCM=plughw:CARD=Headphones,DEV=0
 MIC_PCM=plughw:CARD=C920,DEV=0
+UPLINK_SOURCE=mic
+UPLINK_AUDIO_FILE=KBC_PRANK.mp3
 SCO_RATE=16000
 AUTO_CONNECT=1
 DISCOVERABLE=1
@@ -229,6 +238,17 @@ The ALSA playback device that should receive phone call audio.
 
 #### `MIC_PCM`
 The ALSA capture device for the microphone that should be sent to the phone.
+
+#### `UPLINK_SOURCE`
+Choose how uplink audio is generated:
+
+- `mic` captures from `MIC_PCM`
+- `file` loops the file configured in `UPLINK_AUDIO_FILE`
+
+#### `UPLINK_AUDIO_FILE`
+Local audio file to feed into the call when `UPLINK_SOURCE=file`.
+
+Relative paths are resolved relative to the directory containing `bridge.conf`.
 
 #### `SCO_RATE`
 Use `16000` by default.
@@ -383,6 +403,22 @@ Meaning:
 - capture from the webcam mic
 - feed mono PCM audio into the Bluetooth SCO transport
 - keep the pipeline tolerant of idle transport states with `HWCOMPAT=silence`
+
+### Alternate uplink (looped local file -> phone)
+
+When `UPLINK_SOURCE=file`, this worker is started instead:
+
+```bash
+ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i "$UPLINK_AUDIO_FILE" -vn -f s16le -acodec pcm_s16le -ac 1 -ar "$SCO_RATE" - \
+  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco" -q -f S16_LE -c 1 -r "$SCO_RATE"
+```
+
+Meaning:
+
+- decode the local audio file
+- loop it continuously
+- convert it to mono PCM at the SCO rate
+- send that audio back to the caller instead of using the live mic
 
 ---
 

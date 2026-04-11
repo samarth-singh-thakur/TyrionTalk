@@ -17,6 +17,15 @@ AUX_PCM=plughw:CARD=Headphones,DEV=0
 # Example for Logitech C920 microphone:
 MIC_PCM=plughw:CARD=C920,DEV=0
 
+# Uplink source:
+#   mic  -> capture from MIC_PCM
+#   file -> loop the audio file below into the call instead of the mic
+UPLINK_SOURCE=mic
+
+# Used when UPLINK_SOURCE=file. Relative paths are resolved from the directory
+# containing bridge.conf.
+UPLINK_AUDIO_FILE=KBC_PRANK.mp3
+
 # 16000 works well for HFP mSBC and will be converted down if the call falls back to CVSD.
 SCO_RATE=16000
 
