@@ -1,0 +1,8 @@
+pipewire-pulse.service                                               enabled   enabled
+pipewire.service                                                     enabled   enabled
+pulseaudio.service                                                   masked    enabled
+pulseaudio\x7e.service                                               masked    enabled
+wireplumber.service                                                  enabled   enabled
+wireplumber@.service                                                 disabled  enabled
+pipewire-pulse.socket                                                enabled   enabled
+pipewire.socket                                                      enabled   enabled

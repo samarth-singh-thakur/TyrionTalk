@@ -1,0 +1,6 @@
+● pipewire-media-session.service               not-found inactive dead    pipewire-media-session.service
+  pipewire-pulse.service                       loaded    inactive dead    PipeWire PulseAudio
+● pipewire-session-manager.service             not-found inactive dead    pipewire-session-manager.service
+  pipewire.service                             loaded    active   running PipeWire Multimedia Service
+● pulseaudio.service                           masked    inactive dead    pulseaudio.service
+  wireplumber.service                          loaded    active   running Multimedia Service Session Manager

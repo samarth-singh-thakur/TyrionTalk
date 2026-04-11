@@ -1,0 +1,4 @@
+**** List of CAPTURE Hardware Devices ****
+card 2: C920 [HD Pro Webcam C920], device 0: USB Audio [USB Audio]
+  Subdevices: 0/1
+  Subdevice #0: subdevice #0

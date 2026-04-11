@@ -1,0 +1,15 @@
+[Unit]
+Description=Bluetooth phone call bridge (phone <-> Raspberry Pi AUX/USB mic)
+After=bluetooth.service network.target
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bt-call-bridge
+ExecStart=/opt/bt-call-bridge/start.sh /opt/bt-call-bridge/bridge.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
