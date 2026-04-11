@@ -1,0 +1,4 @@
+  bluetooth.service                                           loaded    active   running Bluetooth service
+  bt-call-bridge.service                                      loaded    active   running Bluetooth phone call bridge (phone <-> Raspberry Pi AUX/USB mic)
+  ofono-fcc-unlock.service                                    loaded    inactive dead    Process ofono's fcc-unlock.d/ scripts at boot
+  ofono.service                                               loaded    inactive dead    Telephony service

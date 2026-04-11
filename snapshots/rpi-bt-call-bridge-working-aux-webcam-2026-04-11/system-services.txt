@@ -1,0 +1,7 @@
+bluealsa-aplay.service                       disabled        enabled
+bluealsa.service                             disabled        enabled
+bluetooth.service                            enabled         enabled
+bt-call-bridge.service                       enabled         enabled
+ofono-fcc-unlock.service                     enabled         enabled
+ofono.service                                disabled        enabled
+bluetooth.target                             static          -
