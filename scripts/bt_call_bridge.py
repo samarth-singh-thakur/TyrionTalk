@@ -255,6 +255,8 @@ class BTCallBridge:
         self.systemctl_cmd = shutil.which("systemctl")
         self.busctl_cmd = shutil.which("busctl")
         self.pkill_cmd = shutil.which("pkill")
+        self.run_as_user = os.environ.get("SUDO_USER") or os.environ.get("USER") or "tyrion"
+        self.run_as_uid = self._detect_run_as_uid()
         self.bluealsa_cmd = self._find_first(["bluealsad", "bluealsa"])
         self.bluealsa_aplay_cmd = self._find_required("bluealsa-aplay")
         self.bluetoothctl_cmd = self._find_required("bluetoothctl")
@@ -297,6 +299,20 @@ class BTCallBridge:
         if mode not in {"off", "file", "command"}:
             raise BridgeError("UPLINK_TAP_MODE must be 'off', 'file', or 'command'")
         return mode
+
+    def _detect_run_as_uid(self) -> str:
+        try:
+            cp = subprocess.run(
+                ["id", "-u", self.run_as_user],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return "1000"
+        if cp.returncode == 0 and cp.stdout.strip():
+            return cp.stdout.strip()
+        return "1000"
 
     def log(self, msg: str) -> None:
         print(f"[{self._timestamp()}] {msg}", flush=True)
@@ -363,6 +379,33 @@ class BTCallBridge:
             ):
                 subprocess.run(
                     [self.pkill_cmd, "-f", pattern],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+        if self.systemctl_cmd:
+            user_runtime_dir = f"/run/user/{self.run_as_uid}"
+            user_bus_addr = f"unix:path={user_runtime_dir}/bus"
+            for unit in (
+                "pipewire.service",
+                "pipewire-pulse.service",
+                "wireplumber.service",
+                "pipewire.socket",
+                "pipewire-pulse.socket",
+            ):
+                subprocess.run(
+                    [
+                        "sudo",
+                        "-u",
+                        self.run_as_user,
+                        "env",
+                        f"XDG_RUNTIME_DIR={user_runtime_dir}",
+                        f"DBUS_SESSION_BUS_ADDRESS={user_bus_addr}",
+                        self.systemctl_cmd,
+                        "--user",
+                        "stop",
+                        unit,
+                    ],
                     capture_output=True,
                     text=True,
                     check=False,

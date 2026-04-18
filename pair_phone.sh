@@ -20,6 +20,10 @@ BLUEALSA_IO_RT_PRIORITY="${BLUEALSA_IO_RT_PRIORITY:-20}"
 BLUEALSA_CMD="$(command -v bluealsad || command -v bluealsa || true)"
 PKILL_CMD="$(command -v pkill || true)"
 SYSTEMCTL_CMD="$(command -v systemctl || true)"
+RUN_AS_USER="${SUDO_USER:-${USER:-tyrion}}"
+RUN_AS_UID="$(id -u "$RUN_AS_USER" 2>/dev/null || echo 1000)"
+USER_RUNTIME_DIR="/run/user/${RUN_AS_UID}"
+USER_DBUS_ADDR="unix:path=${USER_RUNTIME_DIR}/bus"
 TEMP_BLUEALSA_PID=""
 
 cleanup() {
@@ -33,6 +37,12 @@ trap cleanup EXIT
 
 if [[ -n "$SYSTEMCTL_CMD" ]]; then
   "$SYSTEMCTL_CMD" stop bluealsa.service bluealsa-aplay.service bt-speaker-agent.service 2>/dev/null || true
+  sudo -u "$RUN_AS_USER" \
+    XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$USER_DBUS_ADDR" \
+    "$SYSTEMCTL_CMD" --user stop \
+    pipewire.service pipewire-pulse.service wireplumber.service \
+    pipewire.socket pipewire-pulse.socket 2>/dev/null || true
 fi
 
 if [[ -n "$PKILL_CMD" ]]; then
