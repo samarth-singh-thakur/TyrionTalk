@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-import os
+import re
 import shlex
 import shutil
 import signal
@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 DEFAULTS: Dict[str, str] = {
@@ -32,7 +32,69 @@ DEFAULTS: Dict[str, str] = {
     "RESTART_DELAY_SECS": "2",
     "PAIRABLE_TIMEOUT": "0",
     "DISCOVERABLE_TIMEOUT": "0",
+    "UPLINK_TAP_MODE": "off",
+    "UPLINK_TAP_PATH": "",
+    "UPLINK_TAP_COMMAND": "",
 }
+
+CONFIG_LAYOUT: List[Tuple[str, List[str]]] = [
+    ("Bluetooth and phone", ["PHONE_MAC", "BT_ALIAS", "BT_HCI"]),
+    (
+        "Audio routing",
+        [
+            "AUX_PCM",
+            "MIC_PCM",
+            "UPLINK_SOURCE",
+            "UPLINK_AUDIO_FILE",
+            "SCO_RATE",
+        ],
+    ),
+    (
+        "Uplink stream tap",
+        [
+            "UPLINK_TAP_MODE",
+            "UPLINK_TAP_PATH",
+            "UPLINK_TAP_COMMAND",
+        ],
+    ),
+    (
+        "Bridge runtime",
+        [
+            "AUTO_CONNECT",
+            "DISCOVERABLE",
+            "PAIRABLE",
+            "PAIRABLE_TIMEOUT",
+            "DISCOVERABLE_TIMEOUT",
+            "RESTART_DELAY_SECS",
+        ],
+    ),
+    (
+        "BlueALSA tuning",
+        [
+            "BLUEALSA_INITIAL_VOLUME",
+            "BLUEALSA_KEEP_ALIVE",
+            "BLUEALSA_IO_RT_PRIORITY",
+            "ENABLE_A2DP_SINK",
+            "BLUEALSA_EXTRA_ARGS",
+        ],
+    ),
+]
+
+SUPPORTED_AUDIO_EXTENSIONS = {
+    ".aac",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".webm",
+}
+
+ALSA_DEVICE_RE = re.compile(
+    r"^card\s+(?P<card_index>\d+):\s+(?P<card_id>[^\s]+)\s+\[(?P<card_name>.*?)\],\s+"
+    r"device\s+(?P<device_index>\d+):\s+(?P<device_id>[^\[]*?)\s+\[(?P<device_name>.*?)\]\s*$"
+)
 
 
 @dataclass
@@ -42,8 +104,132 @@ class ChildProcess:
     proc: subprocess.Popen
 
 
+@dataclass
+class AlsaDevice:
+    kind: str
+    card_index: int
+    card_id: str
+    card_name: str
+    device_index: int
+    device_name: str
+
+    @property
+    def pcm(self) -> str:
+        return f"plughw:CARD={self.card_id},DEV={self.device_index}"
+
+    @property
+    def label(self) -> str:
+        return f"{self.card_name} / {self.device_name}"
+
+
+@dataclass
+class BluetoothDevice:
+    mac: str
+    name: str
+
+
 class BridgeError(RuntimeError):
     pass
+
+
+def shell_join(parts: Sequence[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def resolve_config_path_value(raw_path: str, config_dir: Path) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = config_dir / path
+    return path.resolve(strict=False)
+
+
+def format_config_path_value(path: Path, config_dir: Path) -> str:
+    resolved_path = path.expanduser().resolve(strict=False)
+    resolved_config_dir = config_dir.resolve(strict=False)
+    try:
+        return str(resolved_path.relative_to(resolved_config_dir))
+    except ValueError:
+        return str(resolved_path)
+
+
+def parse_alsa_devices(output: str, kind: str) -> List[AlsaDevice]:
+    devices: List[AlsaDevice] = []
+    for raw_line in output.splitlines():
+        match = ALSA_DEVICE_RE.match(raw_line.strip())
+        if not match:
+            continue
+        devices.append(
+            AlsaDevice(
+                kind=kind,
+                card_index=int(match.group("card_index")),
+                card_id=match.group("card_id").strip(),
+                card_name=match.group("card_name").strip(),
+                device_index=int(match.group("device_index")),
+                device_name=match.group("device_name").strip(),
+            )
+        )
+    return devices
+
+
+def list_alsa_devices(kind: str) -> List[AlsaDevice]:
+    if kind not in {"playback", "capture"}:
+        raise ValueError("kind must be 'playback' or 'capture'")
+
+    cmd_name = "aplay" if kind == "playback" else "arecord"
+    cmd_path = shutil.which(cmd_name)
+    if not cmd_path:
+        return []
+
+    cp = subprocess.run([cmd_path, "-l"], capture_output=True, text=True, check=False)
+    combined_output = cp.stdout
+    if cp.stderr:
+        combined_output = f"{combined_output}\n{cp.stderr}"
+    return list(
+        sorted(
+            parse_alsa_devices(combined_output, kind),
+            key=lambda device: (device.card_index, device.device_index),
+        )
+    )
+
+
+def list_bluetooth_devices() -> List[BluetoothDevice]:
+    cmd_path = shutil.which("bluetoothctl")
+    if not cmd_path:
+        return []
+
+    cp = subprocess.run([cmd_path, "devices"], capture_output=True, text=True, check=False)
+    devices: List[BluetoothDevice] = []
+    for raw_line in cp.stdout.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("Device "):
+            continue
+        try:
+            _, mac, name = line.split(maxsplit=2)
+        except ValueError:
+            continue
+        devices.append(BluetoothDevice(mac=mac.strip(), name=name.strip()))
+    return devices
+
+
+def discover_audio_files(search_root: Path, max_depth: int = 4) -> List[Path]:
+    resolved_root = search_root.expanduser().resolve(strict=False)
+    if not resolved_root.exists():
+        return []
+
+    audio_files: List[Path] = []
+    for path in resolved_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS:
+            continue
+        try:
+            depth = len(path.relative_to(resolved_root).parts)
+        except ValueError:
+            continue
+        if depth > max_depth:
+            continue
+        audio_files.append(path.resolve(strict=False))
+    return sorted(audio_files)
 
 
 class BTCallBridge:
@@ -55,6 +241,11 @@ class BTCallBridge:
         self.uplink_source = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
         if self.uplink_source not in {"mic", "file"}:
             raise BridgeError("UPLINK_SOURCE must be 'mic' or 'file'")
+        self.uplink_tap_mode = self._resolve_uplink_tap_mode()
+        self.python_cmd = shutil.which("python3") or sys.executable
+        if not self.python_cmd:
+            raise BridgeError("Could not locate python3 for the uplink fanout helper")
+        self.stream_fanout_script = Path(__file__).resolve().with_name("pcm_stream_fanout.py")
         self.bluealsa_cmd = self._find_first(["bluealsad", "bluealsa"])
         self.bluealsa_aplay_cmd = self._find_required("bluealsa-aplay")
         self.bluetoothctl_cmd = self._find_required("bluetoothctl")
@@ -91,6 +282,12 @@ class BTCallBridge:
     @staticmethod
     def _timestamp() -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _resolve_uplink_tap_mode(self) -> str:
+        mode = self.cfg.get("UPLINK_TAP_MODE", "off").strip().lower() or "off"
+        if mode not in {"off", "file", "command"}:
+            raise BridgeError("UPLINK_TAP_MODE must be 'off', 'file', or 'command'")
+        return mode
 
     def log(self, msg: str) -> None:
         print(f"[{self._timestamp()}] {msg}", flush=True)
@@ -148,15 +345,22 @@ class BTCallBridge:
 
     def build_bluealsa_cmd(self) -> List[str]:
         cmd = [self.bluealsa_cmd]
-        # bluealsad and bluealsa accept the same core options for this use-case.
-        cmd.extend([
-            "--initial-volume", self.cfg["BLUEALSA_INITIAL_VOLUME"],
-            "--keep-alive", self.cfg["BLUEALSA_KEEP_ALIVE"],
-            "--io-rt-priority", self.cfg["BLUEALSA_IO_RT_PRIORITY"],
-            "--device", self.cfg["BT_HCI"],
-            "--profile", "hfp-hf",
-            "--profile", "hsp-hs",
-        ])
+        cmd.extend(
+            [
+                "--initial-volume",
+                self.cfg["BLUEALSA_INITIAL_VOLUME"],
+                "--keep-alive",
+                self.cfg["BLUEALSA_KEEP_ALIVE"],
+                "--io-rt-priority",
+                self.cfg["BLUEALSA_IO_RT_PRIORITY"],
+                "--device",
+                self.cfg["BT_HCI"],
+                "--profile",
+                "hfp-hf",
+                "--profile",
+                "hsp-hs",
+            ]
+        )
         if self._parse_bool(self.cfg["ENABLE_A2DP_SINK"]):
             cmd.extend(["--profile", "a2dp-sink"])
         extra = self.cfg.get("BLUEALSA_EXTRA_ARGS", "").strip()
@@ -178,40 +382,117 @@ class BTCallBridge:
         if not raw_path:
             raise BridgeError("UPLINK_SOURCE=file requires UPLINK_AUDIO_FILE to be set")
 
-        audio_path = Path(raw_path).expanduser()
-        if not audio_path.is_absolute():
-            audio_path = self.config_dir / audio_path
-        audio_path = audio_path.resolve()
+        audio_path = resolve_config_path_value(raw_path, self.config_dir)
         if not audio_path.is_file():
             raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
         return audio_path
 
-    def build_file_uplink_cmd(self) -> List[str]:
-        phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
-        sco_rate = self.cfg["SCO_RATE"].strip()
-        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
-        audio_file = self.resolve_uplink_audio_file()
-        assert self.ffmpeg_cmd is not None
-        pipeline = (
-            f"exec {shlex.quote(self.ffmpeg_cmd)} -hide_banner -loglevel error -nostdin -stream_loop -1 -re "
-            f"-i {shlex.quote(str(audio_file))} -vn -f s16le -acodec pcm_s16le -ac 1 -ar {shlex.quote(sco_rate)} - "
-            f"| {shlex.quote(self.aplay_cmd)} -D {shlex.quote(bluealsa_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)}"
-        )
-        return ["bash", "-lc", pipeline]
+    def resolve_uplink_tap_path(self) -> Path:
+        raw_path = self.cfg.get("UPLINK_TAP_PATH", "").strip()
+        if not raw_path:
+            raise BridgeError("UPLINK_TAP_MODE=file requires UPLINK_TAP_PATH to be set")
+        return resolve_config_path_value(raw_path, self.config_dir)
 
-    def build_uplink_cmd(self) -> List[str]:
-        if self.uplink_source == "file":
-            return self.build_file_uplink_cmd()
-
-        phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
+    def build_mic_uplink_source_cmd(self) -> List[str]:
         sco_rate = self.cfg["SCO_RATE"].strip()
         mic_pcm = self.cfg["MIC_PCM"].strip()
-        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
         assert self.arecord_cmd is not None
-        pipeline = (
-            f"exec {shlex.quote(self.arecord_cmd)} -D {shlex.quote(mic_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)} "
-            f"| {shlex.quote(self.aplay_cmd)} -D {shlex.quote(bluealsa_pcm)} -q -f S16_LE -c 1 -r {shlex.quote(sco_rate)}"
+        return [
+            self.arecord_cmd,
+            "-D",
+            mic_pcm,
+            "-q",
+            "-f",
+            "S16_LE",
+            "-c",
+            "1",
+            "-r",
+            sco_rate,
+        ]
+
+    def build_file_uplink_source_cmd(self) -> List[str]:
+        sco_rate = self.cfg["SCO_RATE"].strip()
+        audio_file = self.resolve_uplink_audio_file()
+        assert self.ffmpeg_cmd is not None
+        return [
+            self.ffmpeg_cmd,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-stream_loop",
+            "-1",
+            "-re",
+            "-i",
+            str(audio_file),
+            "-vn",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            sco_rate,
+            "-",
+        ]
+
+    def build_uplink_sink_cmd(self) -> List[str]:
+        phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
+        sco_rate = self.cfg["SCO_RATE"].strip()
+        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
+        return [
+            self.aplay_cmd,
+            "-D",
+            bluealsa_pcm,
+            "-q",
+            "-f",
+            "S16_LE",
+            "-c",
+            "1",
+            "-r",
+            sco_rate,
+        ]
+
+    def build_uplink_fanout_cmd(self) -> Optional[List[str]]:
+        if self.uplink_tap_mode == "off":
+            return None
+        if not self.stream_fanout_script.is_file():
+            raise BridgeError(f"Missing uplink fanout helper: {self.stream_fanout_script}")
+
+        cmd = [
+            self.python_cmd,
+            str(self.stream_fanout_script),
+            "--sample-rate",
+            self.cfg["SCO_RATE"].strip(),
+            "--channels",
+            "1",
+            "--sample-format",
+            "S16_LE",
+        ]
+        if self.uplink_tap_mode == "file":
+            cmd.extend(["--tap-path", str(self.resolve_uplink_tap_path())])
+        elif self.uplink_tap_mode == "command":
+            tap_command = self.cfg.get("UPLINK_TAP_COMMAND", "").strip()
+            if not tap_command:
+                raise BridgeError(
+                    "UPLINK_TAP_MODE=command requires UPLINK_TAP_COMMAND to be set"
+                )
+            cmd.extend(["--tap-command", tap_command])
+        return cmd
+
+    def build_uplink_cmd(self) -> List[str]:
+        source_cmd = (
+            self.build_file_uplink_source_cmd()
+            if self.uplink_source == "file"
+            else self.build_mic_uplink_source_cmd()
         )
+        pipeline_parts = [shell_join(source_cmd)]
+        fanout_cmd = self.build_uplink_fanout_cmd()
+        if fanout_cmd:
+            pipeline_parts.append(shell_join(fanout_cmd))
+        pipeline_parts.append(shell_join(self.build_uplink_sink_cmd()))
+        pipeline = "set -o pipefail; " + " | ".join(pipeline_parts)
         return ["bash", "-lc", pipeline]
 
     def spawn(self, name: str, cmd: List[str]) -> None:
@@ -275,12 +556,56 @@ def parse_kv_config(path: str) -> Dict[str, str]:
     return cfg
 
 
-def list_alsa() -> int:
-    cmds = [
-        ["bash", "-lc", "echo '=== aplay -l ==='; aplay -l || true; echo; echo '=== arecord -l ==='; arecord -l || true"],
+def render_kv_config(cfg: Dict[str, str]) -> str:
+    lines: List[str] = [
+        "# Bluetooth Call Bridge configuration",
+        "# Generated by bt_call_bridge.py / bt_call_bridge_terminal.py",
+        "",
     ]
-    for cmd in cmds:
-        subprocess.run(cmd, check=False)
+    rendered_keys = set()
+    for section_name, section_keys in CONFIG_LAYOUT:
+        lines.append(f"# {section_name}")
+        for key in section_keys:
+            rendered_keys.add(key)
+            lines.append(f"{key}={cfg.get(key, DEFAULTS.get(key, ''))}")
+        lines.append("")
+
+    extra_keys = sorted(key for key in cfg if key not in rendered_keys)
+    if extra_keys:
+        lines.append("# Extra keys")
+        for key in extra_keys:
+            lines.append(f"{key}={cfg[key]}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_kv_config(path: Path, cfg: Dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_kv_config(cfg), encoding="utf-8")
+
+
+def list_alsa() -> int:
+    for kind, title in (("playback", "Playback"), ("capture", "Capture")):
+        devices = list_alsa_devices(kind)
+        print(f"=== {title} devices ===")
+        if not devices:
+            print("No ALSA devices found or the required command is unavailable.")
+        else:
+            for index, device in enumerate(devices, start=1):
+                print(f"{index}. {device.label}")
+                print(f"   PCM: {device.pcm}")
+        print()
+    return 0
+
+
+def list_bt_devices() -> int:
+    devices = list_bluetooth_devices()
+    if not devices:
+        print("No Bluetooth devices found or bluetoothctl is unavailable.")
+        return 0
+    for index, device in enumerate(devices, start=1):
+        print(f"{index}. {device.name} ({device.mac})")
     return 0
 
 
@@ -300,18 +625,28 @@ def preflight(path: str) -> int:
         print("UPLINK_AUDIO_FILE:", bridge.resolve_uplink_audio_file())
     print("PHONE_MAC:", cfg["PHONE_MAC"] or "<empty>")
     print("AUX_PCM:", cfg["AUX_PCM"])
+    print("UPLINK_TAP_MODE:", bridge.uplink_tap_mode)
+    if bridge.uplink_tap_mode == "file":
+        print("UPLINK_TAP_PATH:", bridge.resolve_uplink_tap_path())
+    elif bridge.uplink_tap_mode == "command":
+        print("UPLINK_TAP_COMMAND:", cfg["UPLINK_TAP_COMMAND"])
     return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Bluetooth phone-call bridge for Raspberry Pi using BlueALSA + ALSA")
+    parser = argparse.ArgumentParser(
+        description="Bluetooth phone-call bridge for Raspberry Pi using BlueALSA + ALSA"
+    )
     parser.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "bridge.conf"))
     parser.add_argument("--list-alsa", action="store_true")
+    parser.add_argument("--list-bt-devices", action="store_true")
     parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args(argv)
 
     if args.list_alsa:
         return list_alsa()
+    if args.list_bt_devices:
+        return list_bt_devices()
     if args.preflight:
         return preflight(args.config)
 

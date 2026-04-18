@@ -5,6 +5,9 @@ This package creates a **userspace Bluetooth call bridge** for a Raspberry Pi:
 - **Phone call downlink**: phone -> Bluetooth HFP/HSP -> Raspberry Pi -> **AUX / headphone jack**
 - **Phone call uplink**: **USB webcam microphone** -> Raspberry Pi -> Bluetooth HFP/HSP -> phone
 - **Alternate call uplink**: **looped local audio file** -> Raspberry Pi -> Bluetooth HFP/HSP -> phone
+- **Optional uplink tap**: mirror the uplink PCM stream to a file, FIFO, or command for future real-time integrations
+
+The SSH terminal app installed by this package is named **`tyrionTalks`**.
 
 It is designed for **Raspberry Pi 3 / Raspberry Pi OS Bookworm or Debian 12-class systems** and uses:
 
@@ -37,12 +40,24 @@ When the bridge is running:
    - Bluetooth SCO call audio -> `bluealsa-aplay` -> configured AUX ALSA PCM
 4. It starts an **uplink path**:
    - configured webcam mic ALSA PCM -> `aplay` to BlueALSA `PROFILE=sco`
-5. It restarts the audio workers if they exit.
+5. It can optionally mirror the uplink PCM stream to:
+   - a file
+   - a FIFO
+   - another command on stdin
+6. It restarts the audio workers if they exit.
 
 The uplink worker can run in two modes:
 
 - `UPLINK_SOURCE=mic` uses the configured `MIC_PCM`
 - `UPLINK_SOURCE=file` decodes and loops `UPLINK_AUDIO_FILE`
+
+The included SSH-friendly terminal UI can:
+
+- select the paired phone / phone MAC
+- select the playback output device
+- switch between microphone and file uplink modes
+- choose the microphone PCM or audio file
+- configure an uplink stream tap for future transcription or streaming services
 
 ---
 
@@ -56,6 +71,7 @@ This package does **not** currently:
 - do DSP/noise suppression/echo cancellation
 - mix music into the microphone uplink
 - replace telephony policy inside Android/iOS
+- perform transcription by itself (it only exposes the uplink stream for another service to consume)
 
 In practice, you normally:
 
@@ -75,9 +91,12 @@ bt-call-bridge-package/
 ├── install.sh
 ├── pair_phone.sh
 ├── start.sh
+├── terminal.sh
 ├── stop.sh
 ├── scripts/
-│   └── bt_call_bridge.py
+│   ├── bt_call_bridge.py
+│   ├── bt_call_bridge_terminal.py
+│   └── pcm_stream_fanout.py
 └── systemd/
     └── bt-call-bridge.service
 ```
@@ -122,10 +141,28 @@ This installs the files to:
 /opt/bt-call-bridge
 ```
 
-and also installs the included systemd unit:
+It also installs a global launcher:
+
+```bash
+/usr/local/bin/tyrionTalks
+```
+
+and installs the included systemd unit:
 
 ```bash
 /etc/systemd/system/bt-call-bridge.service
+```
+
+After install, you can open the interface from **anywhere** in the terminal with:
+
+```bash
+tyrionTalks
+```
+
+If you want to point it at a different config file or audio directory:
+
+```bash
+tyrionTalks /path/to/bridge.conf /path/to/audio-dir
 ```
 
 ### Option B — run directly without installing systemd
@@ -133,8 +170,10 @@ and also installs the included systemd unit:
 You can also keep the folder anywhere and run:
 
 ```bash
-sudo ./start.sh ./bridge.conf
+sudo ./terminal.sh ./bridge.conf
 ```
+
+From the terminal UI, save your selections, pair the phone, and launch the bridge in the foreground.
 
 ---
 
@@ -186,6 +225,36 @@ You can also use the bundled helper:
 python3 scripts/bt_call_bridge.py --list-alsa
 ```
 
+To list remembered Bluetooth devices:
+
+```bash
+python3 scripts/bt_call_bridge.py --list-bt-devices
+```
+
+### SSH terminal interface
+
+After installing with `sudo ./install.sh`, the easiest way to operate this package over SSH is:
+
+```bash
+tyrionTalks
+```
+
+If you are running directly from the unpacked folder without installing, use:
+
+```bash
+sudo ./terminal.sh ./bridge.conf
+```
+
+That menu lets you select:
+
+- the phone MAC / paired device
+- the AUX/headphone output device
+- the uplink mode (`mic` or `file`)
+- the microphone PCM or audio file
+- an optional tap target for the uplink PCM stream
+
+The tap is useful when you later want to forward live microphone audio into another process for transcription.
+
 ---
 
 ## Configure the bridge
@@ -213,6 +282,9 @@ MIC_PCM=plughw:CARD=C920,DEV=0
 UPLINK_SOURCE=mic
 UPLINK_AUDIO_FILE=KBC_PRANK.mp3
 SCO_RATE=16000
+UPLINK_TAP_MODE=off
+UPLINK_TAP_PATH=/tmp/bt-call-bridge-uplink.pcm
+UPLINK_TAP_COMMAND=
 AUTO_CONNECT=1
 DISCOVERABLE=1
 PAIRABLE=1
@@ -249,6 +321,27 @@ Choose how uplink audio is generated:
 Local audio file to feed into the call when `UPLINK_SOURCE=file`.
 
 Relative paths are resolved relative to the directory containing `bridge.conf`.
+
+#### `UPLINK_TAP_MODE`
+Choose whether the uplink PCM stream should also be copied somewhere besides the phone call path.
+
+- `off` keeps the bridge behavior unchanged
+- `file` appends raw PCM to `UPLINK_TAP_PATH`
+- `command` pipes raw PCM to `UPLINK_TAP_COMMAND` on stdin
+
+#### `UPLINK_TAP_PATH`
+File or FIFO target for `UPLINK_TAP_MODE=file`.
+
+This is handy for debugging or for handing the stream to another local service through a named pipe.
+
+#### `UPLINK_TAP_COMMAND`
+Command to launch when `UPLINK_TAP_MODE=command`.
+
+The command receives raw mono 16-bit PCM on stdin at `SCO_RATE`. The bridge also exports:
+
+- `BT_BRIDGE_STREAM_SAMPLE_RATE`
+- `BT_BRIDGE_STREAM_CHANNELS`
+- `BT_BRIDGE_STREAM_SAMPLE_FORMAT`
 
 #### `SCO_RATE`
 Use `16000` by default.
@@ -292,6 +385,8 @@ PHONE_MAC=58:43:AB:D9:8C:6E
 Otherwise leave `PHONE_MAC` blank for first pairing, then fill in the paired phone MAC after you confirm it with `bluetoothctl devices`.
 
 ## Pair the phone
+
+If you installed the package, you can do this entire flow from the `tyrionTalks` menu.
 
 ### 1) Prepare the adapter for pairing
 
@@ -351,6 +446,16 @@ This checks that the required commands are present and prints the resolved confi
 ## Start the bridge
 
 ### Manual run
+
+If installed, the most convenient entrypoint is:
+
+```bash
+tyrionTalks
+```
+
+From that menu you can save config, pair the phone, run preflight, and start the bridge.
+
+### Direct script run
 
 ```bash
 sudo ./start.sh ./bridge.conf

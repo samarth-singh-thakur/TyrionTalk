@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="${TARGET_DIR:-/opt/bt-call-bridge}"
 SERVICE_NAME="bt-call-bridge.service"
+GLOBAL_BIN_DIR="${GLOBAL_BIN_DIR:-/usr/local/bin}"
+TERMINAL_CMD_NAME="${TERMINAL_CMD_NAME:-tyrionTalks}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root: sudo ./install.sh" >&2
@@ -29,12 +31,30 @@ if [[ ! -f "$TARGET_DIR/bridge.conf" ]]; then
 fi
 
 install -m 0644 "$TARGET_DIR/systemd/$SERVICE_NAME" "/etc/systemd/system/$SERVICE_NAME"
+install -d "$GLOBAL_BIN_DIR"
+cat > "$GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_DIR=$(printf '%q' "$TARGET_DIR")
+CONFIG_PATH="\${1:-\$TARGET_DIR/bridge.conf}"
+AUDIO_DIR="\${2:-\$TARGET_DIR}"
+
+if [[ \$EUID -ne 0 ]]; then
+  exec sudo "$GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME" "\$@"
+fi
+
+exec "\$TARGET_DIR/terminal.sh" "\$CONFIG_PATH" "\$AUDIO_DIR"
+EOF
+chmod 0755 "$GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME"
 systemctl daemon-reload
 
 echo
 echo "Installed to $TARGET_DIR"
+echo "Global launcher installed: $GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME"
 echo "Next:"
-echo "  1) Edit $TARGET_DIR/bridge.conf"
-echo "  2) Run $TARGET_DIR/pair_phone.sh $TARGET_DIR/bridge.conf"
+echo "  1) Launch from anywhere: $TERMINAL_CMD_NAME"
+echo "     Optional custom config/audio dir: $TERMINAL_CMD_NAME /path/to/bridge.conf /path/to/audio-dir"
+echo "  2) Or pair manually: $TARGET_DIR/pair_phone.sh $TARGET_DIR/bridge.conf"
 echo "  3) Start manually: sudo $TARGET_DIR/start.sh $TARGET_DIR/bridge.conf"
 echo "     or via systemd: sudo systemctl enable --now $SERVICE_NAME"

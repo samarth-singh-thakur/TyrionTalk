@@ -193,9 +193,11 @@ does all of the following:
 4. Deletes existing contents of `/opt/bt-call-bridge` except an already-existing `bridge.conf`.
 5. Copies this repository into `/opt/bt-call-bridge`.
 6. If `/opt/bt-call-bridge/bridge.conf` does not exist, copies `bridge.conf.example` to create it.
-7. Installs the systemd service file to:
+7. Installs a global launcher to:
+   - `/usr/local/bin/tyrionTalks`
+8. Installs the systemd service file to:
    - `/etc/systemd/system/bt-call-bridge.service`
-8. Runs:
+9. Runs:
    - `systemctl daemon-reload`
 
 What `install.sh` does not do:
@@ -207,9 +209,9 @@ What `install.sh` does not do:
 
 After install, the intended next steps are:
 
-1. edit `bridge.conf`
-2. pair the phone
-3. start manually or enable the service
+1. run `tyrionTalks` from anywhere in the terminal
+2. save or adjust the config from the menu
+3. pair the phone and start the bridge from the menu, or enable the service
 
 ## 6. What each script does
 

@@ -1,4 +1,4 @@
-# Quickstart for TyrionPiSpeaker
+# Quickstart for TyrionTalks
 
 This package has already been aligned to your Pi ALSA devices:
 
@@ -13,39 +13,47 @@ MIC_PCM=plughw:CARD=C920,DEV=0
 sudo ./install.sh
 ```
 
-## 2) Pair the phone
+After install, the app is available globally as:
 
 ```bash
-sudo ./pair_phone.sh ./bridge.conf
+tyrionTalks
 ```
 
-In another terminal:
+## 2) Launch the SSH terminal menu
 
 ```bash
-bluetoothctl devices
+tyrionTalks
 ```
 
-Copy the phone MAC into `PHONE_MAC=` in `bridge.conf`.
+From the menu you can:
 
-If your phone is `Samarth` with MAC `58:43:AB:D9:8C:6E`, set:
+- choose the phone MAC
+- choose the headphone jack output
+- choose the uplink source (`mic` or `file`)
+- pick the C920 mic or an audio file
+- optionally mirror the uplink PCM stream to a file, FIFO, or command for future transcription
+- pair the phone and start the bridge from the same UI
 
-```ini
-PHONE_MAC=58:43:AB:D9:8C:6E
-```
-
-## 3) Start the bridge
-
-```bash
-sudo ./start.sh ./bridge.conf
-```
-
-## 4) What should happen
+## 3) What should happen
 
 - Phone pairs to the Pi as `PiCallBridge` or the alias in your config
 - During a call, phone-call audio should play out of the Pi headphone jack
 - Your Logitech C920 microphone should feed the call uplink
 
-## 5) Smoke tests
+If you prefer the manual flow, you can still run:
+
+```bash
+sudo ./pair_phone.sh ./bridge.conf
+sudo ./start.sh ./bridge.conf
+```
+
+If you are running directly from the repo without installing first, use:
+
+```bash
+sudo ./terminal.sh ./bridge.conf
+```
+
+## 4) Smoke tests
 
 Check devices:
 
@@ -67,7 +75,7 @@ arecord -D plughw:CARD=C920,DEV=0 -f S16_LE -c 1 -r 16000 -d 5 /tmp/test.wav
 aplay /tmp/test.wav
 ```
 
-## 6) Stop
+## 5) Stop
 
 ```bash
 sudo ./stop.sh
