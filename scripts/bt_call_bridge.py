@@ -657,7 +657,7 @@ class BTCallBridge:
     def build_uplink_sink_cmd(self) -> List[str]:
         phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
         sco_rate = self.cfg["SCO_RATE"].strip()
-        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco"
+        bluealsa_pcm = f"bluealsa:DEV={phone_mac},PROFILE=sco,HWCOMPAT=silence"
         return [
             self.aplay_cmd,
             "-D",

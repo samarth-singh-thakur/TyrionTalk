@@ -547,7 +547,7 @@ When `UPLINK_SOURCE=file`, this worker is started instead:
 
 ```bash
 ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i "$UPLINK_AUDIO_FILE" -vn -f s16le -acodec pcm_s16le -ac 1 -ar "$SCO_RATE" - \
-  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco" -q -f S16_LE -c 1 -r "$SCO_RATE"
+  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco,HWCOMPAT=silence" -q -f S16_LE -c 1 -r "$SCO_RATE"
 ```
 
 Meaning:
@@ -556,6 +556,7 @@ Meaning:
 - loop it continuously
 - convert it to mono PCM at the SCO rate
 - send that audio back to the caller instead of using the live mic
+- keep the pipeline tolerant of idle transport states with `HWCOMPAT=silence`
 
 ### Alternate uplink (soundboard -> phone)
 

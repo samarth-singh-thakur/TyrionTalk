@@ -501,7 +501,7 @@ If `UPLINK_SOURCE=file`, the bridge starts this looped file pipeline instead:
 
 ```bash
 ffmpeg -hide_banner -loglevel error -nostdin -stream_loop -1 -re -i "$UPLINK_AUDIO_FILE" -vn -f s16le -acodec pcm_s16le -ac 1 -ar "$SCO_RATE" - \
-  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco" -q -f S16_LE -c 1 -r "$SCO_RATE"
+  | aplay -D "bluealsa:DEV=$PHONE_MAC,PROFILE=sco,HWCOMPAT=silence" -q -f S16_LE -c 1 -r "$SCO_RATE"
 ```
 
 Its job is:
@@ -511,6 +511,7 @@ Its job is:
 - loop it forever
 - convert it to mono 16-bit PCM at the SCO rate
 - feed that audio back to the caller instead of using live mic capture
+- keep the ALSA side tolerant of idle SCO transport states with `HWCOMPAT=silence`
 
 If `UPLINK_SOURCE=soundboard`, the bridge starts a small helper process instead of a fixed `ffmpeg -i <file>` pipeline.
 
