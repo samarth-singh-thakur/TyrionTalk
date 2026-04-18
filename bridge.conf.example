@@ -24,7 +24,7 @@ UPLINK_SOURCE=mic
 
 # Used when UPLINK_SOURCE=file. Relative paths are resolved from the directory
 # containing bridge.conf.
-UPLINK_AUDIO_FILE=KBC_PRANK.mp3
+UPLINK_AUDIO_FILE=audio/KBC_PRANK.mp3
 
 # 16000 works well for HFP mSBC and will be converted down if the call falls back to CVSD.
 SCO_RATE=16000

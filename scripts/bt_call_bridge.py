@@ -90,6 +90,7 @@ SUPPORTED_AUDIO_EXTENSIONS = {
     ".wav",
     ".webm",
 }
+AUDIO_LIBRARY_DIRNAME = "audio"
 
 ALSA_DEVICE_RE = re.compile(
     r"^card\s+(?P<card_index>\d+):\s+(?P<card_id>[^\s]+)\s+\[(?P<card_name>.*?)\],\s+"
@@ -230,6 +231,10 @@ def discover_audio_files(search_root: Path, max_depth: int = 4) -> List[Path]:
             continue
         audio_files.append(path.resolve(strict=False))
     return sorted(audio_files)
+
+
+def resolve_audio_library_path(config_dir: Path, filename: str) -> Path:
+    return (config_dir / AUDIO_LIBRARY_DIRNAME / filename).resolve(strict=False)
 
 
 class BTCallBridge:
@@ -383,6 +388,10 @@ class BTCallBridge:
             raise BridgeError("UPLINK_SOURCE=file requires UPLINK_AUDIO_FILE to be set")
 
         audio_path = resolve_config_path_value(raw_path, self.config_dir)
+        if not audio_path.is_file() and Path(raw_path).name == raw_path:
+            audio_library_path = resolve_audio_library_path(self.config_dir, raw_path)
+            if audio_library_path.is_file():
+                return audio_library_path
         if not audio_path.is_file():
             raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
         return audio_path

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from bt_call_bridge import (
+    AUDIO_LIBRARY_DIRNAME,
     DEFAULTS,
     BridgeError,
     discover_audio_files,
@@ -33,7 +34,7 @@ class BridgeTerminalApp:
         self.audio_dir = (
             audio_dir.expanduser().resolve(strict=False)
             if audio_dir is not None
-            else self.config_dir.resolve(strict=False)
+            else (self.config_dir / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
         )
         self.cfg: Dict[str, str] = dict(DEFAULTS)
         self.dirty = False
@@ -216,12 +217,8 @@ class BridgeTerminalApp:
 
     def audio_candidates(self) -> List[Path]:
         candidates: Dict[str, Path] = {}
-        search_roots = [self.audio_dir]
-        if self.config_dir != self.audio_dir:
-            search_roots.append(self.config_dir)
-        for root in search_roots:
-            for path in discover_audio_files(root):
-                candidates[str(path)] = path
+        for path in discover_audio_files(self.audio_dir):
+            candidates[str(path)] = path
         return [candidates[key] for key in sorted(candidates)]
 
     def choose_audio_file(self) -> None:

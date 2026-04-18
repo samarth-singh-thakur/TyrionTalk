@@ -6,6 +6,7 @@ TARGET_DIR="${TARGET_DIR:-/opt/bt-call-bridge}"
 SERVICE_NAME="bt-call-bridge.service"
 GLOBAL_BIN_DIR="${GLOBAL_BIN_DIR:-/usr/local/bin}"
 TERMINAL_CMD_NAME="${TERMINAL_CMD_NAME:-tyrionTalks}"
+AUDIO_LIBRARY_DIR_NAME="${AUDIO_LIBRARY_DIR_NAME:-audio}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root: sudo ./install.sh" >&2
@@ -25,6 +26,8 @@ apt-get install -y \
 mkdir -p "$TARGET_DIR"
 find "$TARGET_DIR" -mindepth 1 -maxdepth 1 ! -name 'bridge.conf' -exec rm -rf {} +
 cp -a "$ROOT_DIR/." "$TARGET_DIR/"
+mkdir -p "$TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME"
+find "$TARGET_DIR" -maxdepth 1 -type f -iname '*.mp3' -exec cp -f {} "$TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME/" \;
 
 if [[ ! -f "$TARGET_DIR/bridge.conf" ]]; then
   cp "$TARGET_DIR/bridge.conf.example" "$TARGET_DIR/bridge.conf"
@@ -38,7 +41,7 @@ set -euo pipefail
 
 TARGET_DIR=$(printf '%q' "$TARGET_DIR")
 CONFIG_PATH="\${1:-\$TARGET_DIR/bridge.conf}"
-AUDIO_DIR="\${2:-\$TARGET_DIR}"
+AUDIO_DIR="\${2:-\$TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME}"
 
 if [[ \$EUID -ne 0 ]]; then
   exec sudo "$GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME" "\$@"
@@ -52,6 +55,7 @@ systemctl daemon-reload
 echo
 echo "Installed to $TARGET_DIR"
 echo "Global launcher installed: $GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME"
+echo "Audio library: $TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME"
 echo "Next:"
 echo "  1) Launch from anywhere: $TERMINAL_CMD_NAME"
 echo "     Optional custom config/audio dir: $TERMINAL_CMD_NAME /path/to/bridge.conf /path/to/audio-dir"

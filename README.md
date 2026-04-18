@@ -93,6 +93,9 @@ bt-call-bridge-package/
 ├── start.sh
 ├── terminal.sh
 ├── stop.sh
+├── audio/
+│   ├── KBC_PRANK.mp3
+│   └── SAMARTH-WR-PRANK.mp3
 ├── scripts/
 │   ├── bt_call_bridge.py
 │   ├── bt_call_bridge_terminal.py
@@ -145,6 +148,12 @@ It also installs a global launcher:
 
 ```bash
 /usr/local/bin/tyrionTalks
+```
+
+and creates an audio library directory used by the loop-file picker:
+
+```bash
+/opt/bt-call-bridge/audio
 ```
 
 and installs the included systemd unit:
@@ -253,7 +262,7 @@ That menu lets you select:
 - the microphone PCM or audio file
 - an optional tap target for the uplink PCM stream
 
-The tap is useful when you later want to forward live microphone audio into another process for transcription.
+The loop-file picker reads from the dedicated audio library directory by default, and the tap is useful when you later want to forward live microphone audio into another process for transcription.
 
 ---
 
@@ -280,7 +289,7 @@ BT_HCI=hci0
 AUX_PCM=plughw:CARD=Headphones,DEV=0
 MIC_PCM=plughw:CARD=C920,DEV=0
 UPLINK_SOURCE=mic
-UPLINK_AUDIO_FILE=KBC_PRANK.mp3
+UPLINK_AUDIO_FILE=audio/KBC_PRANK.mp3
 SCO_RATE=16000
 UPLINK_TAP_MODE=off
 UPLINK_TAP_PATH=/tmp/bt-call-bridge-uplink.pcm
@@ -321,6 +330,7 @@ Choose how uplink audio is generated:
 Local audio file to feed into the call when `UPLINK_SOURCE=file`.
 
 Relative paths are resolved relative to the directory containing `bridge.conf`.
+By default, place your loop files inside the `audio/` directory and choose them from the `tyrionTalks` menu.
 
 #### `UPLINK_TAP_MODE`
 Choose whether the uplink PCM stream should also be copied somewhere besides the phone call path.
