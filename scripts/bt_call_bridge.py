@@ -17,6 +17,8 @@ DEFAULTS: Dict[str, str] = {
     "PHONE_MAC": "58:43:AB:D9:8C:6E",
     "BT_ALIAS": "PiCallBridge",
     "BT_HCI": "hci0",
+    "BT_AGENT_CAPABILITY": "NoInputNoOutput",
+    "BT_IO_CAPABILITY": "0x03",
     "AUX_PCM": "plughw:CARD=Headphones,DEV=0",
     "MIC_PCM": "plughw:CARD=C920,DEV=0",
     "UPLINK_SOURCE": "mic",
@@ -39,7 +41,10 @@ DEFAULTS: Dict[str, str] = {
 }
 
 CONFIG_LAYOUT: List[Tuple[str, List[str]]] = [
-    ("Bluetooth and phone", ["PHONE_MAC", "BT_ALIAS", "BT_HCI"]),
+    (
+        "Bluetooth and phone",
+        ["PHONE_MAC", "BT_ALIAS", "BT_HCI", "BT_AGENT_CAPABILITY", "BT_IO_CAPABILITY"],
+    ),
     (
         "Audio routing",
         [
@@ -254,6 +259,7 @@ class BTCallBridge:
         self.stream_fanout_script = Path(__file__).resolve().with_name("pcm_stream_fanout.py")
         self.systemctl_cmd = shutil.which("systemctl")
         self.busctl_cmd = shutil.which("busctl")
+        self.btmgmt_cmd = shutil.which("btmgmt")
         self.pkill_cmd = shutil.which("pkill")
         self.run_as_user = os.environ.get("SUDO_USER") or os.environ.get("USER") or "tyrion"
         self.run_as_uid = self._detect_run_as_uid()
@@ -346,13 +352,9 @@ class BTCallBridge:
         return cp
 
     def configure_adapter(self) -> None:
-        agent_capability = self.cfg.get("BT_AGENT_CAPABILITY", "").strip()
-        commands = ["power on"]
-        if agent_capability:
-            commands.append(f"agent {agent_capability}")
-        else:
-            commands.append("agent on")
-        commands.append("default-agent")
+        self.configure_controller_pairing_mode()
+        agent_capability = self.cfg.get("BT_AGENT_CAPABILITY", "NoInputNoOutput").strip()
+        commands = ["power on", "agent off", f"agent {agent_capability}", "default-agent"]
         alias = self.cfg["BT_ALIAS"].strip()
         if alias:
             commands.append(f"system-alias {alias}")
@@ -362,6 +364,28 @@ class BTCallBridge:
             commands.append("discoverable on")
             commands.append(f"discoverable-timeout {self.cfg['DISCOVERABLE_TIMEOUT']}")
         self.btctl(commands)
+
+    def run_btmgmt(self, *args: str) -> None:
+        if os.geteuid() != 0 or not self.btmgmt_cmd:
+            return
+        commands_to_try = []
+        bt_hci = self.cfg.get("BT_HCI", "").strip()
+        if bt_hci:
+            commands_to_try.append([self.btmgmt_cmd, "-i", bt_hci, *args])
+        commands_to_try.append([self.btmgmt_cmd, *args])
+        for cmd in commands_to_try:
+            cp = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if cp.returncode == 0:
+                return
+
+    def configure_controller_pairing_mode(self) -> None:
+        io_capability = self.cfg.get("BT_IO_CAPABILITY", "0x03").strip() or "0x03"
+        self.run_btmgmt("power", "off")
+        self.run_btmgmt("io-cap", io_capability)
+        self.run_btmgmt("bondable", "on")
+        self.run_btmgmt("connectable", "on")
+        self.run_btmgmt("ssp", "on")
+        self.run_btmgmt("power", "on")
 
     def stop_conflicting_services(self) -> None:
         if os.geteuid() != 0:

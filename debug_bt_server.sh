@@ -25,9 +25,11 @@ BLUEALSA_INITIAL_VOLUME="${BLUEALSA_INITIAL_VOLUME:-70}"
 BLUEALSA_KEEP_ALIVE="${BLUEALSA_KEEP_ALIVE:--1}"
 BLUEALSA_IO_RT_PRIORITY="${BLUEALSA_IO_RT_PRIORITY:-20}"
 ENABLE_A2DP_SINK="${ENABLE_A2DP_SINK:-0}"
-AGENT_CAPABILITY="${BT_AGENT_CAPABILITY:-}"
+AGENT_CAPABILITY="${BT_AGENT_CAPABILITY:-NoInputNoOutput}"
+IO_CAPABILITY="${BT_IO_CAPABILITY:-0x03}"
 
 BLUEALSA_CMD="$(command -v bluealsad || command -v bluealsa || true)"
+BTMGMT_CMD="$(command -v btmgmt || true)"
 SYSTEMCTL_CMD="$(command -v systemctl || true)"
 PKILL_CMD="$(command -v pkill || true)"
 RUN_AS_USER="${SUDO_USER:-${USER:-tyrion}}"
@@ -54,6 +56,13 @@ run_user_systemctl() {
     XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" \
     DBUS_SESSION_BUS_ADDRESS="$USER_DBUS_ADDR" \
     "$SYSTEMCTL_CMD" --user "$@" 2>/dev/null || true
+}
+
+run_btmgmt() {
+  if [[ -z "$BTMGMT_CMD" ]]; then
+    return 0
+  fi
+  "$BTMGMT_CMD" -i "$BT_HCI" "$@" 2>/dev/null || "$BTMGMT_CMD" "$@" 2>/dev/null || true
 }
 
 cleanup() {
@@ -112,6 +121,14 @@ run_user_systemctl stop \
   pipewire-pulse.socket \
   pulseaudio.service
 
+log "Forcing controller IO capability to NoInputNoOutput via btmgmt"
+run_btmgmt power off
+run_btmgmt io-cap "$IO_CAPABILITY"
+run_btmgmt bondable on
+run_btmgmt connectable on
+run_btmgmt ssp on
+run_btmgmt power on
+
 BLUEALSA_ARGS=(
   --initial-volume "$BLUEALSA_INITIAL_VOLUME"
   --keep-alive "$BLUEALSA_KEEP_ALIVE"
@@ -139,11 +156,7 @@ send_btctl() {
   printf '%s\n' "$line" >&3
 }
 
-if [[ -n "$AGENT_CAPABILITY" ]]; then
-  log "Starting persistent bluetoothctl agent with explicit capability: $AGENT_CAPABILITY"
-else
-  log "Starting persistent bluetoothctl agent with snapshot-style default agent"
-fi
+log "Starting persistent bluetoothctl agent with explicit capability: $AGENT_CAPABILITY"
 BTCTL_FIFO="$(mktemp -u /tmp/btctl.XXXXXX.fifo)"
 BTCTL_LOG="$(mktemp /tmp/btctl.XXXXXX.log)"
 mkfifo "$BTCTL_FIFO"
@@ -157,12 +170,8 @@ BTCTL_READER_PID=$!
 
 sleep 1
 send_btctl "power on"
-if [[ -n "$AGENT_CAPABILITY" ]]; then
-  send_btctl "agent off"
-  send_btctl "agent $AGENT_CAPABILITY"
-else
-  send_btctl "agent on"
-fi
+send_btctl "agent off"
+send_btctl "agent $AGENT_CAPABILITY"
 send_btctl "default-agent"
 send_btctl "system-alias $BT_ALIAS"
 send_btctl "pairable on"

@@ -36,6 +36,15 @@ if command -v systemctl >/dev/null 2>&1; then
     ofono.service 2>/dev/null || true
 fi
 
+if command -v btmgmt >/dev/null 2>&1; then
+  btmgmt power off 2>/dev/null || true
+  btmgmt io-cap 0x03 2>/dev/null || true
+  btmgmt bondable on 2>/dev/null || true
+  btmgmt connectable on 2>/dev/null || true
+  btmgmt ssp on 2>/dev/null || true
+  btmgmt power on 2>/dev/null || true
+fi
+
 mkdir -p "$TARGET_DIR"
 find "$TARGET_DIR" -mindepth 1 -maxdepth 1 ! -name 'bridge.conf' -exec rm -rf {} +
 cp -a "$ROOT_DIR/." "$TARGET_DIR/"
@@ -70,6 +79,7 @@ echo "Installed to $TARGET_DIR"
 echo "Global launcher installed: $GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME"
 echo "Audio library: $TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME"
 echo "Disabled conflicting system Bluetooth audio services: bluealsa, bluealsa-aplay, bt-speaker-agent, ofono"
+echo "Forced Bluetooth pairing mode to NoInputNoOutput via btmgmt io-cap 0x03"
 echo "Next:"
 echo "  1) Launch from anywhere: $TERMINAL_CMD_NAME"
 echo "     Optional custom config/audio dir: $TERMINAL_CMD_NAME /path/to/bridge.conf /path/to/audio-dir"
