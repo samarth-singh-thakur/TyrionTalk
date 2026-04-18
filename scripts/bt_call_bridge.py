@@ -606,11 +606,11 @@ class BTCallBridge:
 
     def run(self) -> None:
         self.configure_adapter()
-        self.trust_and_connect_phone()
         while not self.should_stop:
             if not self.ensure_bluealsa_ready():
                 time.sleep(float(self.cfg["RESTART_DELAY_SECS"]))
                 continue
+            self.trust_and_connect_phone()
             self.ensure_started("downlink", self.build_downlink_cmd())
             self.ensure_started("uplink", self.build_uplink_cmd())
             if self._parse_bool(self.cfg["AUTO_CONNECT"]):
