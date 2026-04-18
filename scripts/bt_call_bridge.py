@@ -346,7 +346,13 @@ class BTCallBridge:
         return cp
 
     def configure_adapter(self) -> None:
-        commands = ["power on", "agent NoInputNoOutput", "default-agent"]
+        agent_capability = self.cfg.get("BT_AGENT_CAPABILITY", "").strip()
+        commands = ["power on"]
+        if agent_capability:
+            commands.append(f"agent {agent_capability}")
+        else:
+            commands.append("agent on")
+        commands.append("default-agent")
         alias = self.cfg["BT_ALIAS"].strip()
         if alias:
             commands.append(f"system-alias {alias}")

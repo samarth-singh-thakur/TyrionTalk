@@ -23,6 +23,19 @@ apt-get install -y \
   ffmpeg \
   python3
 
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop \
+    bluealsa.service \
+    bluealsa-aplay.service \
+    bt-speaker-agent.service \
+    ofono.service 2>/dev/null || true
+  systemctl disable \
+    bluealsa.service \
+    bluealsa-aplay.service \
+    bt-speaker-agent.service \
+    ofono.service 2>/dev/null || true
+fi
+
 mkdir -p "$TARGET_DIR"
 find "$TARGET_DIR" -mindepth 1 -maxdepth 1 ! -name 'bridge.conf' -exec rm -rf {} +
 cp -a "$ROOT_DIR/." "$TARGET_DIR/"
@@ -56,6 +69,7 @@ echo
 echo "Installed to $TARGET_DIR"
 echo "Global launcher installed: $GLOBAL_BIN_DIR/$TERMINAL_CMD_NAME"
 echo "Audio library: $TARGET_DIR/$AUDIO_LIBRARY_DIR_NAME"
+echo "Disabled conflicting system Bluetooth audio services: bluealsa, bluealsa-aplay, bt-speaker-agent, ofono"
 echo "Next:"
 echo "  1) Launch from anywhere: $TERMINAL_CMD_NAME"
 echo "     Optional custom config/audio dir: $TERMINAL_CMD_NAME /path/to/bridge.conf /path/to/audio-dir"

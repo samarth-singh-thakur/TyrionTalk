@@ -25,7 +25,7 @@ BLUEALSA_INITIAL_VOLUME="${BLUEALSA_INITIAL_VOLUME:-70}"
 BLUEALSA_KEEP_ALIVE="${BLUEALSA_KEEP_ALIVE:--1}"
 BLUEALSA_IO_RT_PRIORITY="${BLUEALSA_IO_RT_PRIORITY:-20}"
 ENABLE_A2DP_SINK="${ENABLE_A2DP_SINK:-0}"
-AGENT_CAPABILITY="${BT_AGENT_CAPABILITY:-NoInputNoOutput}"
+AGENT_CAPABILITY="${BT_AGENT_CAPABILITY:-}"
 
 BLUEALSA_CMD="$(command -v bluealsad || command -v bluealsa || true)"
 SYSTEMCTL_CMD="$(command -v systemctl || true)"
@@ -139,7 +139,11 @@ send_btctl() {
   printf '%s\n' "$line" >&3
 }
 
-log "Starting persistent bluetoothctl agent with capability: $AGENT_CAPABILITY"
+if [[ -n "$AGENT_CAPABILITY" ]]; then
+  log "Starting persistent bluetoothctl agent with explicit capability: $AGENT_CAPABILITY"
+else
+  log "Starting persistent bluetoothctl agent with snapshot-style default agent"
+fi
 BTCTL_FIFO="$(mktemp -u /tmp/btctl.XXXXXX.fifo)"
 BTCTL_LOG="$(mktemp /tmp/btctl.XXXXXX.log)"
 mkfifo "$BTCTL_FIFO"
@@ -153,7 +157,12 @@ BTCTL_READER_PID=$!
 
 sleep 1
 send_btctl "power on"
-send_btctl "agent $AGENT_CAPABILITY"
+if [[ -n "$AGENT_CAPABILITY" ]]; then
+  send_btctl "agent off"
+  send_btctl "agent $AGENT_CAPABILITY"
+else
+  send_btctl "agent on"
+fi
 send_btctl "default-agent"
 send_btctl "system-alias $BT_ALIAS"
 send_btctl "pairable on"
