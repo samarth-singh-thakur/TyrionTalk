@@ -1,0 +1,14 @@
+Snapshot type: source archive
+Created from branch: KBC_PRANK
+Commit: 99d1ca341a3ccf54f601acdcf9f895c123474d8e
+Commit short SHA: 99d1ca3
+Commit message: Document NoInputNoOutput pairing flow
+Commit date: 2026-04-18T18:23:55+05:30
+
+Contents:
+- Git-tracked source tree archived from HEAD
+- Excludes live Raspberry Pi runtime state such as /opt/bt-call-bridge, /var/lib/bluetooth, and /var/lib/bluealsa
+
+Use this alongside the Pi runtime snapshots in this directory when you want:
+- a clean code backup of the current working version
+- a named archive that matches the committed docs and NoInputNoOutput pairing flow
