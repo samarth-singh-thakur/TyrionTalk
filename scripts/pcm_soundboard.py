@@ -15,15 +15,22 @@ def resolve_audio_path(raw_path: str, config_dir: Path, audio_dir: Path) -> Path
     if path.is_absolute():
         return path.resolve(strict=False)
 
+    audio_relative = path
+    if path.parts and path.parts[0] == "audio":
+        audio_relative = Path(*path.parts[1:])
+
+    audio_path = (audio_dir / audio_relative).resolve(strict=False)
+    if path.parts and path.parts[0] == "audio" and audio_path.is_file():
+        return audio_path
+
     config_path = (config_dir / path).resolve(strict=False)
     if config_path.is_file():
         return config_path
 
-    audio_path = (audio_dir / raw_path).resolve(strict=False)
     if audio_path.is_file():
         return audio_path
 
-    return config_path
+    return audio_path if path.parts and path.parts[0] == "audio" else config_path
 
 
 def read_selection(selector_path: Path, default_selection: str) -> str:

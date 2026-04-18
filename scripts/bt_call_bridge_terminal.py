@@ -372,13 +372,21 @@ class BridgeTerminalApp:
 
     def run_preflight(self) -> None:
         self.run_command(
-            [sys.executable, str(self.bridge_script), "--config", str(self.config_path), "--preflight"],
+            [
+                sys.executable,
+                str(self.bridge_script),
+                "--config",
+                str(self.config_path),
+                "--audio-dir",
+                str(self.audio_dir),
+                "--preflight",
+            ],
             "Running preflight checks...",
         )
 
     def start_bridge(self) -> None:
         self.run_command(
-            [str(self.root_dir / "start.sh"), str(self.config_path)],
+            [str(self.root_dir / "start.sh"), str(self.config_path), str(self.audio_dir)],
             "Starting the bridge in the foreground. Press Ctrl+C to stop it and return here.",
         )
 

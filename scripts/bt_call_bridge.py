@@ -245,27 +245,42 @@ def default_audio_library_dir() -> Path:
     return (Path(__file__).resolve().parents[1] / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
 
 
-def resolve_audio_library_path(config_dir: Path, filename: str) -> Path:
-    search_roots = [default_audio_library_dir()]
+def resolve_audio_library_path(
+    config_dir: Path, filename: str, audio_library_dir: Optional[Path] = None
+) -> Path:
+    relative_path = Path(filename)
+    if relative_path.parts and relative_path.parts[0] == AUDIO_LIBRARY_DIRNAME:
+        relative_path = Path(*relative_path.parts[1:])
+    search_roots = [
+        audio_library_dir.expanduser().resolve(strict=False)
+        if audio_library_dir is not None
+        else default_audio_library_dir()
+    ]
     config_audio_dir = (config_dir / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
     if config_audio_dir not in search_roots:
         search_roots.append(config_audio_dir)
 
     for audio_dir in search_roots:
-        candidate = (audio_dir / filename).resolve(strict=False)
+        candidate = (audio_dir / relative_path).resolve(strict=False)
         if candidate.is_file():
             return candidate
 
-    return (search_roots[0] / filename).resolve(strict=False)
+    return (search_roots[0] / relative_path).resolve(strict=False)
 
 
 class BTCallBridge:
-    def __init__(self, cfg: Dict[str, str], config_path: Optional[str] = None):
+    def __init__(
+        self, cfg: Dict[str, str], config_path: Optional[str] = None, audio_dir: Optional[Path] = None
+    ):
         self.cfg = cfg
         self.children: Dict[str, ChildProcess] = {}
         self.should_stop = False
         self.config_dir = Path(config_path).resolve().parent if config_path else Path.cwd()
-        self.audio_library_dir = default_audio_library_dir()
+        self.audio_library_dir = (
+            audio_dir.expanduser().resolve(strict=False)
+            if audio_dir is not None
+            else default_audio_library_dir()
+        )
         self.uplink_source = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
         if self.uplink_source not in {"mic", "file", "soundboard"}:
             raise BridgeError("UPLINK_SOURCE must be 'mic', 'file', or 'soundboard'")
@@ -543,12 +558,25 @@ class BTCallBridge:
         if not raw_path:
             raise BridgeError("UPLINK_SOURCE=file requires UPLINK_AUDIO_FILE to be set")
 
+        path = Path(raw_path).expanduser()
+        if path.is_absolute():
+            audio_path = path.resolve(strict=False)
+            if not audio_path.is_file():
+                raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
+            return audio_path
+
+        audio_library_path = resolve_audio_library_path(
+            self.config_dir, raw_path, self.audio_library_dir
+        )
+        if path.parts and path.parts[0] == AUDIO_LIBRARY_DIRNAME and audio_library_path.is_file():
+            return audio_library_path
+
         audio_path = resolve_config_path_value(raw_path, self.config_dir)
-        if not audio_path.is_file() and Path(raw_path).name == raw_path:
-            audio_library_path = resolve_audio_library_path(self.config_dir, raw_path)
-            if audio_library_path.is_file():
-                return audio_library_path
+        if not audio_path.is_file() and path.name == raw_path and audio_library_path.is_file():
+            return audio_library_path
         if not audio_path.is_file():
+            if path.parts and path.parts[0] == AUDIO_LIBRARY_DIRNAME:
+                raise BridgeError(f"Configured uplink audio file not found: {audio_library_path}")
             raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
         return audio_path
 
@@ -574,12 +602,25 @@ class BTCallBridge:
                 "UPLINK_SOURCE=soundboard requires a selected clip or UPLINK_AUDIO_FILE fallback"
             )
 
+        path = Path(raw_path).expanduser()
+        if path.is_absolute():
+            audio_path = path.resolve(strict=False)
+            if not audio_path.is_file():
+                raise BridgeError(f"Configured soundboard audio file not found: {audio_path}")
+            return audio_path
+
+        audio_library_path = resolve_audio_library_path(
+            self.config_dir, raw_path, self.audio_library_dir
+        )
+        if path.parts and path.parts[0] == AUDIO_LIBRARY_DIRNAME and audio_library_path.is_file():
+            return audio_library_path
+
         audio_path = resolve_config_path_value(raw_path, self.config_dir)
-        if not audio_path.is_file() and Path(raw_path).name == raw_path:
-            audio_library_path = resolve_audio_library_path(self.config_dir, raw_path)
-            if audio_library_path.is_file():
-                return audio_library_path
+        if not audio_path.is_file() and path.name == raw_path and audio_library_path.is_file():
+            return audio_library_path
         if not audio_path.is_file():
+            if path.parts and path.parts[0] == AUDIO_LIBRARY_DIRNAME:
+                raise BridgeError(f"Configured soundboard audio file not found: {audio_library_path}")
             raise BridgeError(f"Configured soundboard audio file not found: {audio_path}")
         return audio_path
 
@@ -829,13 +870,14 @@ def list_bt_devices() -> int:
     return 0
 
 
-def preflight(path: str) -> int:
+def preflight(path: str, audio_dir: Optional[Path] = None) -> int:
     cfg = parse_kv_config(path)
-    bridge = BTCallBridge(cfg, config_path=path)
+    bridge = BTCallBridge(cfg, config_path=path, audio_dir=audio_dir)
     print("BlueALSA daemon:", bridge.bluealsa_cmd)
     print("bluealsa-aplay:", bridge.bluealsa_aplay_cmd)
     print("bluetoothctl:", bridge.bluetoothctl_cmd)
     print("aplay:", bridge.aplay_cmd)
+    print("AUDIO_LIBRARY_DIR:", bridge.audio_library_dir)
     print("UPLINK_SOURCE:", bridge.uplink_source)
     if bridge.uplink_source == "mic":
         print("arecord:", bridge.arecord_cmd)
@@ -863,6 +905,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         description="Bluetooth phone-call bridge for Raspberry Pi using BlueALSA + ALSA"
     )
     parser.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "bridge.conf"))
+    parser.add_argument("--audio-dir", help="Directory to search for relative audio files")
     parser.add_argument("--list-alsa", action="store_true")
     parser.add_argument("--list-bt-devices", action="store_true")
     parser.add_argument("--preflight", action="store_true")
@@ -873,10 +916,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.list_bt_devices:
         return list_bt_devices()
     if args.preflight:
-        return preflight(args.config)
+        return preflight(args.config, audio_dir=Path(args.audio_dir) if args.audio_dir else None)
 
     cfg = parse_kv_config(args.config)
-    bridge = BTCallBridge(cfg, config_path=args.config)
+    bridge = BTCallBridge(
+        cfg, config_path=args.config, audio_dir=Path(args.audio_dir) if args.audio_dir else None
+    )
     bridge.run()
     return 0
 
