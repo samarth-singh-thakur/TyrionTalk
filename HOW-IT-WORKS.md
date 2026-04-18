@@ -199,7 +199,14 @@ does all of the following:
    - `/opt/bt-call-bridge/audio`
 9. Installs the systemd service file to:
    - `/etc/systemd/system/bt-call-bridge.service`
-10. Runs:
+10. Stops and disables conflicting system Bluetooth audio services:
+   - `bluealsa.service`
+   - `bluealsa-aplay.service`
+   - `bt-speaker-agent.service`
+   - `ofono.service`
+11. Forces headset-style pairing mode on the controller with:
+   - `btmgmt io-cap 0x03`
+12. Runs:
    - `systemctl daemon-reload`
 
 What `install.sh` does not do:
@@ -229,23 +236,25 @@ sudo ./pair_phone.sh ./bridge.conf
 What it does:
 
 1. Loads `bridge.conf`.
-2. Reads `BT_ALIAS` from the config, defaulting to `PiCallBridge`.
-3. Runs `bluetoothctl`.
-4. Forces the adapter into:
+2. Starts a temporary BlueALSA server with the HFP/HSP call profiles enabled.
+3. Stops conflicting bridge, Bluetooth audio, and user audio services that can interfere with pairing.
+4. Forces controller IO capability with `btmgmt io-cap 0x03`.
+5. Runs a persistent `bluetoothctl` session and forces:
    - powered on
-   - agent on
-   - default-agent
+   - `agent NoInputNoOutput`
+   - `default-agent`
    - pairable on
-   - pairable-timeout 0
    - discoverable on
    - discoverable-timeout 0
-5. Sets the adapter alias shown on the phone.
+6. Sets the adapter alias shown on the phone.
+7. Keeps the temporary agent and call-profile server alive until pairing finishes.
 
 Important practical note:
 
 - `pair_phone.sh` always makes the adapter pairable and discoverable with timeout `0`
+- it uses `BT_ALIAS`, `BT_HCI`, `BT_AGENT_CAPABILITY`, and `BT_IO_CAPABILITY`
 - it does not read the config flags `PAIRABLE`, `DISCOVERABLE`, `PAIRABLE_TIMEOUT`, or `DISCOVERABLE_TIMEOUT`
-- those configurable flags are used by the Python bridge, not by `pair_phone.sh`
+- those configurable flags are used by the Python bridge after pairing, not by `pair_phone.sh`
 
 Its purpose is simple: make the Pi visible to the phone so you can complete initial pairing and then copy the phone MAC address into `PHONE_MAC`.
 
@@ -362,6 +371,8 @@ Important settings include:
 - `PHONE_MAC`
 - `BT_ALIAS`
 - `BT_HCI`
+- `BT_AGENT_CAPABILITY`
+- `BT_IO_CAPABILITY`
 - `AUX_PCM`
 - `MIC_PCM`
 - `UPLINK_SOURCE`
@@ -392,10 +403,19 @@ If one is missing, startup fails early with a clear error.
 
 ### Step 3: configure the adapter
 
+Before talking to `bluetoothctl`, the bridge forces controller pairing mode with `btmgmt`:
+
+- `power off`
+- `io-cap <BT_IO_CAPABILITY>`
+- `bondable on`
+- `connectable on`
+- `ssp on`
+- `power on`
+
 It sends commands to `bluetoothctl` to:
 
 - power on the adapter
-- turn on the agent
+- force `agent <BT_AGENT_CAPABILITY>`
 - set the adapter alias
 - make the adapter pairable if configured
 - make the adapter discoverable if configured

@@ -162,6 +162,11 @@ and installs the included systemd unit:
 /etc/systemd/system/bt-call-bridge.service
 ```
 
+During install, it also:
+
+- disables conflicting system Bluetooth audio services such as `bluealsa`, `bluealsa-aplay`, `bt-speaker-agent`, and `ofono`
+- forces headset-style pairing mode with `btmgmt io-cap 0x03` and `BT_AGENT_CAPABILITY=NoInputNoOutput`
+
 After install, you can open the interface from **anywhere** in the terminal with:
 
 ```bash
@@ -404,12 +409,16 @@ If you installed the package, you can do this entire flow from the `tyrionTalks`
 sudo ./pair_phone.sh ./bridge.conf
 ```
 
-This makes the adapter:
+This starts a temporary pairing server that:
 
 - powered on
+- forces `NoInputNoOutput` pairing at the controller and `bluetoothctl` agent layers
 - pairable
 - discoverable
 - renamed to your configured `BT_ALIAS`
+- keeps HFP/HSP call profiles alive while the phone pairs
+
+Keep that terminal open until the phone finishes pairing.
 
 ### 2) Pair from the phone
 

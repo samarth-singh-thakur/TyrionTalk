@@ -19,6 +19,8 @@ After install, the app is available globally as:
 tyrionTalks
 ```
 
+The installer also disables conflicting system Bluetooth audio services and forces headset-style `NoInputNoOutput` pairing mode on the Pi.
+
 ## 2) Launch the SSH terminal menu
 
 ```bash
@@ -54,6 +56,8 @@ If you prefer the manual flow, you can still run:
 sudo ./pair_phone.sh ./bridge.conf
 sudo ./start.sh ./bridge.conf
 ```
+
+When using `pair_phone.sh`, keep that terminal open while the phone pairs. It runs a temporary Bluetooth call-profile server so the phone sees the correct HFP/HSP capabilities.
 
 If you are running directly from the repo without installing first, use:
 
