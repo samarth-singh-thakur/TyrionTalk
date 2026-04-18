@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import re
 import shlex
 import shutil
@@ -251,6 +252,9 @@ class BTCallBridge:
         if not self.python_cmd:
             raise BridgeError("Could not locate python3 for the uplink fanout helper")
         self.stream_fanout_script = Path(__file__).resolve().with_name("pcm_stream_fanout.py")
+        self.systemctl_cmd = shutil.which("systemctl")
+        self.busctl_cmd = shutil.which("busctl")
+        self.pkill_cmd = shutil.which("pkill")
         self.bluealsa_cmd = self._find_first(["bluealsad", "bluealsa"])
         self.bluealsa_aplay_cmd = self._find_required("bluealsa-aplay")
         self.bluetoothctl_cmd = self._find_required("bluetoothctl")
@@ -326,17 +330,78 @@ class BTCallBridge:
         return cp
 
     def configure_adapter(self) -> None:
-        commands = ["power on", "agent on", "default-agent"]
+        commands = ["power on", "agent NoInputNoOutput", "default-agent"]
         alias = self.cfg["BT_ALIAS"].strip()
         if alias:
             commands.append(f"system-alias {alias}")
         if self._parse_bool(self.cfg["PAIRABLE"]):
             commands.append("pairable on")
-            commands.append(f"pairable-timeout {self.cfg['PAIRABLE_TIMEOUT']}")
         if self._parse_bool(self.cfg["DISCOVERABLE"]):
             commands.append("discoverable on")
             commands.append(f"discoverable-timeout {self.cfg['DISCOVERABLE_TIMEOUT']}")
         self.btctl(commands)
+
+    def stop_conflicting_services(self) -> None:
+        if os.geteuid() != 0:
+            return
+        if self.systemctl_cmd:
+            services = [
+                "bluealsa.service",
+                "bluealsa-aplay.service",
+                "bt-speaker-agent.service",
+            ]
+            subprocess.run(
+                [self.systemctl_cmd, "stop", *services],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        if self.pkill_cmd:
+            for pattern in (
+                "/usr/bin/bluealsa -S",
+                "/usr/bin/bluealsa-aplay -S",
+            ):
+                subprocess.run(
+                    [self.pkill_cmd, "-f", pattern],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+    def bluealsa_name_is_owned(self) -> bool:
+        if not self.busctl_cmd:
+            return False
+        cp = subprocess.run(
+            [self.busctl_cmd, "--system", "list"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode != 0:
+            return False
+        return "org.bluealsa" in cp.stdout
+
+    def ensure_bluealsa_ready(self) -> bool:
+        child = self.children.get("bluealsa")
+        if child is None or child.proc.poll() is not None:
+            self.stop_conflicting_services()
+            self.spawn("bluealsa", self.build_bluealsa_cmd())
+            child = self.children["bluealsa"]
+
+        if not self.busctl_cmd:
+            time.sleep(1)
+            return child.proc.poll() is None
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if child.proc.poll() is not None:
+                self.log(f"Process bluealsa exited with rc={child.proc.returncode} before it became ready.")
+                return False
+            if self.bluealsa_name_is_owned():
+                return True
+            time.sleep(0.2)
+        self.log("Timed out waiting for BlueALSA to claim org.bluealsa.")
+        return False
 
     def trust_and_connect_phone(self) -> None:
         phone_mac = self.cfg["PHONE_MAC"].strip()
@@ -543,7 +608,9 @@ class BTCallBridge:
         self.configure_adapter()
         self.trust_and_connect_phone()
         while not self.should_stop:
-            self.ensure_started("bluealsa", self.build_bluealsa_cmd())
+            if not self.ensure_bluealsa_ready():
+                time.sleep(float(self.cfg["RESTART_DELAY_SECS"]))
+                continue
             self.ensure_started("downlink", self.build_downlink_cmd())
             self.ensure_started("uplink", self.build_uplink_cmd())
             if self._parse_bool(self.cfg["AUTO_CONNECT"]):

@@ -15,11 +15,10 @@ BT_ALIAS="${BT_ALIAS:-PiCallBridge}"
 
 bluetoothctl <<EOF
 power on
-agent on
+agent NoInputNoOutput
 default-agent
 system-alias $BT_ALIAS
 pairable on
-pairable-timeout 0
 discoverable on
 discoverable-timeout 0
 quit
