@@ -46,17 +46,18 @@ When the bridge is running:
    - another command on stdin
 6. It restarts the audio workers if they exit.
 
-The uplink worker can run in two modes:
+The uplink worker can run in three modes:
 
 - `UPLINK_SOURCE=mic` uses the configured `MIC_PCM`
 - `UPLINK_SOURCE=file` decodes and loops `UPLINK_AUDIO_FILE`
+- `UPLINK_SOURCE=soundboard` watches a selector file so you can hot-swap the active looping clip
 
 The included SSH-friendly terminal UI can:
 
 - select the paired phone / phone MAC
 - select the playback output device
-- switch between microphone and file uplink modes
-- choose the microphone PCM or audio file
+- switch between microphone, file, and soundboard uplink modes
+- choose the microphone PCM, loop file, or active soundboard clip
 - configure an uplink stream tap for future transcription or streaming services
 
 ---
@@ -150,7 +151,9 @@ It also installs a global launcher:
 /usr/local/bin/tyrionTalks
 ```
 
-and creates an audio library directory used by the loop-file picker:
+and creates an audio library directory used by the loop-file picker. The bridge
+looks in the package's own `audio/` directory by default, so after install that
+path is:
 
 ```bash
 /opt/bt-call-bridge/audio
@@ -186,6 +189,9 @@ You can also keep the folder anywhere and run:
 ```bash
 sudo ./terminal.sh ./bridge.conf
 ```
+
+When running directly from the repo, the default loop-file library is the
+package-local `./audio` directory.
 
 From the terminal UI, save your selections, pair the phone, and launch the bridge in the foreground.
 
@@ -330,12 +336,19 @@ Choose how uplink audio is generated:
 
 - `mic` captures from `MIC_PCM`
 - `file` loops the file configured in `UPLINK_AUDIO_FILE`
+- `soundboard` uses `UPLINK_AUDIO_FILE` as a fallback clip and watches `SOUNDBOARD_SELECTOR_PATH` for live clip changes
 
 #### `UPLINK_AUDIO_FILE`
 Local audio file to feed into the call when `UPLINK_SOURCE=file`.
+It is also the fallback/default clip for `UPLINK_SOURCE=soundboard`.
 
 Relative paths are resolved relative to the directory containing `bridge.conf`.
 By default, place your loop files inside the `audio/` directory and choose them from the `tyrionTalks` menu.
+
+#### `SOUNDBOARD_SELECTOR_PATH`
+Text file used by `UPLINK_SOURCE=soundboard`.
+
+The terminal UI writes the currently selected clip here, and the running bridge hot-swaps to that clip without needing a full bridge restart.
 
 #### `UPLINK_TAP_MODE`
 Choose whether the uplink PCM stream should also be copied somewhere besides the phone call path.
@@ -543,6 +556,16 @@ Meaning:
 - loop it continuously
 - convert it to mono PCM at the SCO rate
 - send that audio back to the caller instead of using the live mic
+
+### Alternate uplink (soundboard -> phone)
+
+When `UPLINK_SOURCE=soundboard`, the bridge starts a helper that watches `SOUNDBOARD_SELECTOR_PATH`, loops the selected clip, and restarts the decoder whenever that selected clip changes.
+
+Meaning:
+
+- you keep a stable soundboard mode in the config
+- option `5` in `tyrionTalks` updates the active clip
+- a running bridge can switch to the new clip without rewriting `UPLINK_AUDIO_FILE`
 
 ---
 

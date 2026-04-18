@@ -8,14 +8,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from bt_call_bridge import (
-    AUDIO_LIBRARY_DIRNAME,
     DEFAULTS,
     BridgeError,
+    default_audio_library_dir,
     discover_audio_files,
     format_config_path_value,
     list_alsa_devices,
     list_bluetooth_devices,
     parse_kv_config,
+    resolve_config_path_value,
     shell_join,
     write_kv_config,
 )
@@ -34,7 +35,7 @@ class BridgeTerminalApp:
         self.audio_dir = (
             audio_dir.expanduser().resolve(strict=False)
             if audio_dir is not None
-            else (self.config_dir / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
+            else default_audio_library_dir()
         )
         self.cfg: Dict[str, str] = dict(DEFAULTS)
         self.dirty = False
@@ -63,7 +64,34 @@ class BridgeTerminalApp:
         if source == "file":
             file_value = self.cfg.get("UPLINK_AUDIO_FILE", "").strip() or "<not set>"
             return f"file -> {file_value}"
+        if source == "soundboard":
+            file_value = (
+                self.read_soundboard_selection()
+                or self.cfg.get("UPLINK_AUDIO_FILE", "").strip()
+                or "<not set>"
+            )
+            return f"soundboard -> {file_value}"
         return f"mic -> {self.cfg.get('MIC_PCM', '<not set>')}"
+
+    def soundboard_selector_path(self) -> Path:
+        raw_path = self.cfg.get("SOUNDBOARD_SELECTOR_PATH", "").strip() or DEFAULTS[
+            "SOUNDBOARD_SELECTOR_PATH"
+        ]
+        return resolve_config_path_value(raw_path, self.config_dir)
+
+    def read_soundboard_selection(self) -> str:
+        selector_path = self.soundboard_selector_path()
+        try:
+            return selector_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            return ""
+
+    def write_soundboard_selection(self, value: str) -> None:
+        selector_path = self.soundboard_selector_path()
+        selector_path.parent.mkdir(parents=True, exist_ok=True)
+        selector_path.write_text(f"{value.strip()}\n", encoding="utf-8")
 
     def current_tap_summary(self) -> str:
         mode = self.cfg.get("UPLINK_TAP_MODE", "off").strip().lower() or "off"
@@ -95,9 +123,9 @@ class BridgeTerminalApp:
         print()
         print("1. Select paired phone / phone MAC")
         print("2. Select output device")
-        print("3. Choose uplink source mode (mic or file)")
+        print("3. Choose uplink source mode (mic, file, or soundboard)")
         print("4. Select microphone capture device")
-        print("5. Select audio file to loop")
+        print("5. Select audio file / soundboard clip")
         print("6. Configure uplink stream tap")
         print("7. Save config")
         print("8. Pair phone / make adapter discoverable")
@@ -181,13 +209,22 @@ class BridgeTerminalApp:
         current = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
         print("\n1. mic  -> capture from MIC_PCM")
         print("2. file -> loop an audio file into the call")
-        choice = self.prompt("Choose uplink source", default="1" if current == "mic" else "2")
+        print("3. soundboard -> watch a selector file and hot-swap the looping clip")
+        default = {"mic": "1", "file": "2", "soundboard": "3"}.get(current, "1")
+        choice = self.prompt("Choose uplink source", default=default)
         if choice == "1":
             self.set_value("UPLINK_SOURCE", "mic")
             return
         if choice == "2":
             self.set_value("UPLINK_SOURCE", "file")
             if not self.cfg.get("UPLINK_AUDIO_FILE", "").strip():
+                self.choose_audio_file()
+            return
+        if choice == "3":
+            self.set_value("UPLINK_SOURCE", "soundboard")
+            if not (
+                self.read_soundboard_selection() or self.cfg.get("UPLINK_AUDIO_FILE", "").strip()
+            ):
                 self.choose_audio_file()
             return
         print("Invalid selection.")
@@ -223,31 +260,54 @@ class BridgeTerminalApp:
 
     def choose_audio_file(self) -> None:
         files = self.audio_candidates()
+        source = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
         print("\nDetected audio files:")
         if files:
             for index, path in enumerate(files, start=1):
                 display_path = format_config_path_value(path, self.config_dir)
-                marker = " *" if self.cfg.get("UPLINK_AUDIO_FILE", "") == display_path else ""
+                current_value = (
+                    self.read_soundboard_selection()
+                    if source == "soundboard"
+                    else self.cfg.get("UPLINK_AUDIO_FILE", "")
+                )
+                marker = " *" if current_value == display_path else ""
                 print(f"{index}. {display_path}{marker}")
         else:
             print("No audio files found under the search paths. You can still enter a path manually.")
+        if source == "soundboard":
+            print(f"Soundboard selector: {self.soundboard_selector_path()}")
+            print("Selecting a clip updates the live soundboard selector file.")
         print("m. Enter audio file path manually")
         choice = self.prompt("Choose an audio file", default="m").lower()
         if choice == "m":
             manual_path = self.prompt(
                 "Enter audio file path",
-                default=self.cfg.get("UPLINK_AUDIO_FILE", ""),
+                default=(
+                    self.read_soundboard_selection()
+                    if source == "soundboard"
+                    else self.cfg.get("UPLINK_AUDIO_FILE", "")
+                ),
             )
             if manual_path:
-                self.set_value("UPLINK_AUDIO_FILE", manual_path)
+                if source == "soundboard":
+                    self.write_soundboard_selection(manual_path)
+                    if not self.cfg.get("UPLINK_AUDIO_FILE", "").strip():
+                        self.set_value("UPLINK_AUDIO_FILE", manual_path)
+                    print(f"Updated soundboard clip via {self.soundboard_selector_path()}")
+                else:
+                    self.set_value("UPLINK_AUDIO_FILE", manual_path)
             return
         if choice.isdigit():
             index = int(choice) - 1
             if 0 <= index < len(files):
-                self.set_value(
-                    "UPLINK_AUDIO_FILE",
-                    format_config_path_value(files[index], self.config_dir),
-                )
+                selection = format_config_path_value(files[index], self.config_dir)
+                if source == "soundboard":
+                    self.write_soundboard_selection(selection)
+                    if not self.cfg.get("UPLINK_AUDIO_FILE", "").strip():
+                        self.set_value("UPLINK_AUDIO_FILE", selection)
+                    print(f"Updated soundboard clip via {self.soundboard_selector_path()}")
+                else:
+                    self.set_value("UPLINK_AUDIO_FILE", selection)
                 return
         print("Invalid selection.")
 

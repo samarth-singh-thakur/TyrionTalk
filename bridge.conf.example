@@ -24,13 +24,18 @@ AUX_PCM=plughw:CARD=Headphones,DEV=0
 MIC_PCM=plughw:CARD=C920,DEV=0
 
 # Uplink source:
-#   mic  -> capture from MIC_PCM
-#   file -> loop the audio file below into the call instead of the mic
+#   mic        -> capture from MIC_PCM
+#   file       -> loop the audio file below into the call instead of the mic
+#   soundboard -> watch SOUNDBOARD_SELECTOR_PATH so you can hot-swap clips
 UPLINK_SOURCE=mic
 
-# Used when UPLINK_SOURCE=file. Relative paths are resolved from the directory
-# containing bridge.conf.
+# Used when UPLINK_SOURCE=file and as the fallback/default clip for soundboard
+# mode. Relative paths are resolved from the directory containing bridge.conf.
 UPLINK_AUDIO_FILE=audio/KBC_PRANK.mp3
+
+# Used when UPLINK_SOURCE=soundboard. The terminal UI writes the currently
+# selected clip to this file, and the bridge watches it live.
+SOUNDBOARD_SELECTOR_PATH=.soundboard-current.txt
 
 # 16000 works well for HFP mSBC and will be converted down if the call falls back to CVSD.
 SCO_RATE=16000

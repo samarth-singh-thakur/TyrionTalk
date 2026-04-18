@@ -219,7 +219,8 @@ What `install.sh` does not do:
 After install, the intended next steps are:
 
 1. run `tyrionTalks` from anywhere in the terminal
-2. add any new loop audio files to `/opt/bt-call-bridge/audio`
+2. add any new loop audio files to the package's `audio/` directory
+   after install this is usually `/opt/bt-call-bridge/audio`
 3. save or adjust the config from the menu
 4. pair the phone and start the bridge from the menu, or enable the service
 
@@ -377,6 +378,7 @@ Important settings include:
 - `MIC_PCM`
 - `UPLINK_SOURCE`
 - `UPLINK_AUDIO_FILE`
+- `SOUNDBOARD_SELECTOR_PATH`
 - `SCO_RATE`
 - `AUTO_CONNECT`
 - `DISCOVERABLE`
@@ -397,7 +399,7 @@ It checks that these commands exist:
 Then, depending on uplink mode, it also requires:
 
 - `arecord` for `UPLINK_SOURCE=mic`
-- `ffmpeg` for `UPLINK_SOURCE=file`
+- `ffmpeg` for `UPLINK_SOURCE=file` or `UPLINK_SOURCE=soundboard`
 
 If one is missing, startup fails early with a clear error.
 
@@ -510,6 +512,15 @@ Its job is:
 - convert it to mono 16-bit PCM at the SCO rate
 - feed that audio back to the caller instead of using live mic capture
 
+If `UPLINK_SOURCE=soundboard`, the bridge starts a small helper process instead of a fixed `ffmpeg -i <file>` pipeline.
+
+That helper:
+
+- watches `SOUNDBOARD_SELECTOR_PATH`
+- uses `UPLINK_AUDIO_FILE` as the fallback/default clip
+- restarts the decoder whenever the selected clip changes
+- keeps the main SCO uplink pipeline alive while clips are swapped
+
 ### Step 8: supervise the workers
 
 The script keeps a dictionary of child processes:
@@ -551,6 +562,7 @@ AUX_PCM=plughw:CARD=Headphones,DEV=0
 MIC_PCM=plughw:CARD=C920,DEV=0
 UPLINK_SOURCE=file
 UPLINK_AUDIO_FILE=KBC_PRANK.mp3
+SOUNDBOARD_SELECTOR_PATH=.soundboard-current.txt
 SCO_RATE=16000
 AUTO_CONNECT=1
 DISCOVERABLE=1
@@ -572,8 +584,9 @@ What the most important keys mean:
 - `BT_HCI`: the Bluetooth adapter, usually `hci0`
 - `AUX_PCM`: the ALSA playback target for the remote caller's voice
 - `MIC_PCM`: the ALSA capture source for your local microphone
-- `UPLINK_SOURCE`: `mic` for live mic capture or `file` for looped audio-file playback
-- `UPLINK_AUDIO_FILE`: local file to decode and loop when `UPLINK_SOURCE=file`
+- `UPLINK_SOURCE`: `mic` for live mic capture, `file` for looped audio-file playback, or `soundboard` for hot-swappable clip playback
+- `UPLINK_AUDIO_FILE`: local file to decode and loop when `UPLINK_SOURCE=file`, and the fallback/default clip for `soundboard`
+- `SOUNDBOARD_SELECTOR_PATH`: text file that stores the currently selected soundboard clip
 - `SCO_RATE`: usually `16000`, which is a sensible default for wideband-capable HFP audio
 - `AUTO_CONNECT`: whether the bridge should keep trying to connect the configured phone
 - `DISCOVERABLE` and `PAIRABLE`: whether the adapter stays visible/pairable while the bridge runs
@@ -686,6 +699,11 @@ When things are working correctly:
 If `UPLINK_SOURCE=file`, step 6 changes to:
 
 - the caller hears the configured local audio file on loop instead of live mic audio
+
+If `UPLINK_SOURCE=soundboard`, step 6 changes to:
+
+- the caller hears whichever clip is currently selected in the soundboard selector file
+- switching clips from the terminal UI updates that selector without needing to rewrite the main file setting
 
 What this project does not do:
 

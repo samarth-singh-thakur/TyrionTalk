@@ -31,18 +31,26 @@ From the menu you can:
 
 - choose the phone MAC
 - choose the headphone jack output
-- choose the uplink source (`mic` or `file`)
-- pick the C920 mic or an audio file from the `audio/` library
+- choose the uplink source (`mic`, `file`, or `soundboard`)
+- pick the C920 mic, a loop file, or the active soundboard clip from the `audio/` library
 - optionally mirror the uplink PCM stream to a file, FIFO, or command for future transcription
 - pair the phone and start the bridge from the same UI
 
 Put any new `.mp3` files you want to loop into:
 
 ```bash
+./audio
+```
+
+If you installed the package into `/opt/bt-call-bridge`, that path becomes:
+
+```bash
 /opt/bt-call-bridge/audio
 ```
 
 They will then show up in option `5` inside `tyrionTalks`.
+
+If you set `UPLINK_SOURCE=soundboard`, option `5` updates the live soundboard selector file so the running bridge can swap clips without you editing `UPLINK_AUDIO_FILE`.
 
 ## 3) What should happen
 

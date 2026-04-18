@@ -23,6 +23,7 @@ DEFAULTS: Dict[str, str] = {
     "MIC_PCM": "plughw:CARD=C920,DEV=0",
     "UPLINK_SOURCE": "mic",
     "UPLINK_AUDIO_FILE": "",
+    "SOUNDBOARD_SELECTOR_PATH": ".soundboard-current.txt",
     "SCO_RATE": "16000",
     "AUTO_CONNECT": "1",
     "DISCOVERABLE": "1",
@@ -52,6 +53,7 @@ CONFIG_LAYOUT: List[Tuple[str, List[str]]] = [
             "MIC_PCM",
             "UPLINK_SOURCE",
             "UPLINK_AUDIO_FILE",
+            "SOUNDBOARD_SELECTOR_PATH",
             "SCO_RATE",
         ],
     ),
@@ -239,8 +241,22 @@ def discover_audio_files(search_root: Path, max_depth: int = 4) -> List[Path]:
     return sorted(audio_files)
 
 
+def default_audio_library_dir() -> Path:
+    return (Path(__file__).resolve().parents[1] / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
+
+
 def resolve_audio_library_path(config_dir: Path, filename: str) -> Path:
-    return (config_dir / AUDIO_LIBRARY_DIRNAME / filename).resolve(strict=False)
+    search_roots = [default_audio_library_dir()]
+    config_audio_dir = (config_dir / AUDIO_LIBRARY_DIRNAME).resolve(strict=False)
+    if config_audio_dir not in search_roots:
+        search_roots.append(config_audio_dir)
+
+    for audio_dir in search_roots:
+        candidate = (audio_dir / filename).resolve(strict=False)
+        if candidate.is_file():
+            return candidate
+
+    return (search_roots[0] / filename).resolve(strict=False)
 
 
 class BTCallBridge:
@@ -249,14 +265,16 @@ class BTCallBridge:
         self.children: Dict[str, ChildProcess] = {}
         self.should_stop = False
         self.config_dir = Path(config_path).resolve().parent if config_path else Path.cwd()
+        self.audio_library_dir = default_audio_library_dir()
         self.uplink_source = self.cfg.get("UPLINK_SOURCE", "mic").strip().lower() or "mic"
-        if self.uplink_source not in {"mic", "file"}:
-            raise BridgeError("UPLINK_SOURCE must be 'mic' or 'file'")
+        if self.uplink_source not in {"mic", "file", "soundboard"}:
+            raise BridgeError("UPLINK_SOURCE must be 'mic', 'file', or 'soundboard'")
         self.uplink_tap_mode = self._resolve_uplink_tap_mode()
         self.python_cmd = shutil.which("python3") or sys.executable
         if not self.python_cmd:
             raise BridgeError("Could not locate python3 for the uplink fanout helper")
         self.stream_fanout_script = Path(__file__).resolve().with_name("pcm_stream_fanout.py")
+        self.soundboard_script = Path(__file__).resolve().with_name("pcm_soundboard.py")
         self.systemctl_cmd = shutil.which("systemctl")
         self.busctl_cmd = shutil.which("busctl")
         self.btmgmt_cmd = shutil.which("btmgmt")
@@ -534,6 +552,37 @@ class BTCallBridge:
             raise BridgeError(f"Configured uplink audio file not found: {audio_path}")
         return audio_path
 
+    def resolve_soundboard_selector_path(self) -> Path:
+        raw_path = self.cfg.get("SOUNDBOARD_SELECTOR_PATH", "").strip()
+        if not raw_path:
+            raw_path = DEFAULTS["SOUNDBOARD_SELECTOR_PATH"]
+        return resolve_config_path_value(raw_path, self.config_dir)
+
+    def read_soundboard_selection(self) -> str:
+        selector_path = self.resolve_soundboard_selector_path()
+        try:
+            return selector_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            return ""
+
+    def resolve_soundboard_audio_file(self) -> Path:
+        raw_path = self.read_soundboard_selection() or self.cfg.get("UPLINK_AUDIO_FILE", "").strip()
+        if not raw_path:
+            raise BridgeError(
+                "UPLINK_SOURCE=soundboard requires a selected clip or UPLINK_AUDIO_FILE fallback"
+            )
+
+        audio_path = resolve_config_path_value(raw_path, self.config_dir)
+        if not audio_path.is_file() and Path(raw_path).name == raw_path:
+            audio_library_path = resolve_audio_library_path(self.config_dir, raw_path)
+            if audio_library_path.is_file():
+                return audio_library_path
+        if not audio_path.is_file():
+            raise BridgeError(f"Configured soundboard audio file not found: {audio_path}")
+        return audio_path
+
     def resolve_uplink_tap_path(self) -> Path:
         raw_path = self.cfg.get("UPLINK_TAP_PATH", "").strip()
         if not raw_path:
@@ -584,6 +633,27 @@ class BTCallBridge:
             "-",
         ]
 
+    def build_soundboard_source_cmd(self) -> List[str]:
+        if not self.soundboard_script.is_file():
+            raise BridgeError(f"Missing soundboard helper: {self.soundboard_script}")
+        default_selection = self.cfg.get("UPLINK_AUDIO_FILE", "").strip()
+        return [
+            self.python_cmd,
+            str(self.soundboard_script),
+            "--selector-path",
+            str(self.resolve_soundboard_selector_path()),
+            "--default-selection",
+            default_selection,
+            "--config-dir",
+            str(self.config_dir),
+            "--audio-dir",
+            str(self.audio_library_dir),
+            "--sample-rate",
+            self.cfg["SCO_RATE"].strip(),
+            "--channels",
+            "1",
+        ]
+
     def build_uplink_sink_cmd(self) -> List[str]:
         phone_mac = self.cfg["PHONE_MAC"].strip() or "00:00:00:00:00:00"
         sco_rate = self.cfg["SCO_RATE"].strip()
@@ -629,11 +699,12 @@ class BTCallBridge:
         return cmd
 
     def build_uplink_cmd(self) -> List[str]:
-        source_cmd = (
-            self.build_file_uplink_source_cmd()
-            if self.uplink_source == "file"
-            else self.build_mic_uplink_source_cmd()
-        )
+        if self.uplink_source == "file":
+            source_cmd = self.build_file_uplink_source_cmd()
+        elif self.uplink_source == "soundboard":
+            source_cmd = self.build_soundboard_source_cmd()
+        else:
+            source_cmd = self.build_mic_uplink_source_cmd()
         pipeline_parts = [shell_join(source_cmd)]
         fanout_cmd = self.build_uplink_fanout_cmd()
         if fanout_cmd:
@@ -769,6 +840,11 @@ def preflight(path: str) -> int:
     if bridge.uplink_source == "mic":
         print("arecord:", bridge.arecord_cmd)
         print("MIC_PCM:", cfg["MIC_PCM"])
+    elif bridge.uplink_source == "soundboard":
+        print("ffmpeg:", bridge.ffmpeg_cmd)
+        print("soundboard helper:", bridge.soundboard_script)
+        print("SOUNDBOARD_SELECTOR_PATH:", bridge.resolve_soundboard_selector_path())
+        print("SOUNDBOARD_SELECTED_FILE:", bridge.resolve_soundboard_audio_file())
     else:
         print("ffmpeg:", bridge.ffmpeg_cmd)
         print("UPLINK_AUDIO_FILE:", bridge.resolve_uplink_audio_file())
